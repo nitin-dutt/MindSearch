@@ -1,0 +1,28 @@
+# ----- Core RAG -----
+sentence-transformers
+faiss-cpu
+numpy
+
+# ----- FastAPI Backend -----
+fastapi
+uvicorn[standard]
+pydantic
+
+# ----- Document Processing -----
+nltk
+python-docx
+pdfplumber
+chardet
+
+# ----- Streamlit Frontend -----
+streamlit
+streamlit-local-storage
+
+# ----- Async + HTTP -----
+requests
+aiohttp
+
+# ----- Misc -----
+python-multipart
+
+ollama
