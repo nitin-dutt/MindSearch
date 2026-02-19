@@ -18,4 +18,4 @@ def search_embeddings(query, index_path, k=5):
     index = faiss.read_index(index_path)
     q = model.encode([query], convert_to_numpy=True)
     scores, idxs = index.search(q, k)
-    return idxs[0]
+    return scores[0], idxs[0]

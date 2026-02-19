@@ -180,16 +180,6 @@ Edit backend files to customize:
 - Smaller embedding models → faster but less accurate search
 - Adjust `k` (search results) based on context length needs
 
-## Future Enhancements
-
-- [ ] Multi-model support (GPT-4, Claude)
-- [ ] Web search integration
-- [ ] Query expansion with knowledge graphs
-- [ ] Document metadata filtering
-- [ ] User authentication & persistence
-- [ ] Docker deployment
-- [ ] Evaluation metrics dashboard
-
 ## License
 
 MIT
@@ -198,3 +188,19 @@ MIT
 
 Nitin Dutt - [GitHub](https://github.com/nitin-dutt)
 
+## Verification
+
+To verify the Hybrid Retrieval (BM25 + FAISS) system:
+
+1. **Run the Comparison Script:**
+   Generate a report comparing BM25, FAISS, and Hybrid results for sample queries.
+   ```bash
+   cd backend
+   python compare_retrievers.py
+   # Check retrieval_comparison.md for output
+   ```
+
+2. **Manual Check:**
+   - Upload a document via the frontend.
+   - Ask a query that relies on specific keywords (tests BM25) vs conceptual understanding (tests FAISS).
+   - The system now uses RRF to rank results from both.

@@ -26,3 +26,5 @@ aiohttp
 python-multipart
 
 ollama
+rank_bm25
+cryptography
