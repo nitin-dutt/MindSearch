@@ -12,7 +12,7 @@ API_BASE_URL = "http://localhost:8000"
 API_ENDPOINT = f"{API_BASE_URL}/v1/chat/completions"
 
 st.set_page_config(
-    page_title="DocuChat AI",
+    page_title="MindSearch AI",
     page_icon="📄",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -593,7 +593,7 @@ st.markdown("""
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("favicon.png", width=80) # Ensure you have this image or comment it out
-    st.markdown("### DocuChat AI")
+    st.markdown("### MindSearch AI")
 
     st.subheader("Chat Sessions")
     
@@ -663,7 +663,7 @@ with st.sidebar:
 # --- MAIN CONTENT ---
 st.markdown("""
 <div class="main-header">
-    <h2>DocuChat AI</h2>
+    <h2>MindSearch AI</h2>
     <p>Your Advanced RAG Assistant</p>
 </div>
 """, unsafe_allow_html=True)
@@ -687,7 +687,7 @@ with chat_container:
         else:
             st.markdown(f"""
             <div class="chat-message assistant">
-                <div class="message-role">DocuChat AI</div>
+                <div class="message-role">MindSearch AI</div>
                 <div class="message-content">{content}</div>
             </div>
             """, unsafe_allow_html=True)
@@ -720,7 +720,7 @@ with st.form(key="message_form", clear_on_submit=True):
 # --- EMPTY STATE ---
 if len(st.session_state.messages) == 0:
     st.info("""
-    **Welcome to DocuChat AI!**
+    **Welcome to MindSearch AI!**
     
     I am ready to help you analyze your documents. 
     
@@ -731,7 +731,7 @@ if len(st.session_state.messages) == 0:
 
 st.markdown(
     "<div style='text-align: center; color: #666; font-size: 0.9rem; margin-top: 20px;'>"
-    "DocuChat AI v1.0"
+    "MindSearch AI v1.0"
     "</div>",
     unsafe_allow_html=True
 )

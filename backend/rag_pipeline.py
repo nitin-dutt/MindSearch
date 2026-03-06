@@ -5,6 +5,7 @@ from llm import stream_generate
 from bm25_retriever import BM25Retriever
 from reranker import ReRanker
 from encryptor import Encryptor
+from kg_builder import KnowledgeGraphBuilder
 
 class RAGPipeline:
 
@@ -14,6 +15,7 @@ class RAGPipeline:
         self.bm25_path = "./bm25.index"
         self.reranker = ReRanker()
         self.encryptor = Encryptor() # Generates new key on each restart if not persisted!
+        self.kg_builder = KnowledgeGraphBuilder(uri="neo4j://127.0.0.1:7687", user="neo4j", password="24112003")
         # In a real app, load key from env/file. For demo/research, generating new key is fine 
         # as long as we don't expect persistence across restarts without reloading chunks.
 
@@ -28,7 +30,12 @@ class RAGPipeline:
         bm25.build_index(plaintext_chunks)
         bm25.save_index(self.bm25_path)
         
-        # 3. Encrypt Chunks for Storage
+        # 3. Build Knowledge Graph (Entities & Relations)
+        # We process the entire text or chunk by chunk
+        full_text = "\n".join(plaintext_chunks)
+        self.kg_builder.process_text(full_text)
+        
+        # 4. Encrypt Chunks for Storage
         self.chunks = [self.encryptor.encrypt(chunk) for chunk in plaintext_chunks]
 
     def retrieve_context(self, query):
@@ -62,7 +69,14 @@ class RAGPipeline:
                  # So it should be bytes.
                  decrypted_context.append(str(chunk_data))
                  
-        return decrypted_context
+        # 3. Get Graph Context based on Query Entities
+        graph_context = self.kg_builder.get_graph_context(query)
+        
+        # 4. Merge Contexts
+        # Prepend graph context so it has high attention
+        final_context = graph_context + decrypted_context
+                 
+        return final_context
 
     async def stream_answer(self, query, context):
         ctx = "\n\n".join(context)

@@ -5,6 +5,7 @@ from bm25_retriever import BM25Retriever
 from embedder import search_embeddings
 from retriever import retrieve
 import time
+from kg_builder import KnowledgeGraphBuilder
 
 def compare_retrievers():
     # Setup paths
@@ -33,6 +34,9 @@ def compare_retrievers():
     bm25_ret.load_index(bm25_path)
     chunks = bm25_ret.chunks
     print(f"Loaded {len(chunks)} chunks.")
+    
+    print("Initializing Knowledge Graph Builder...")
+    kg_builder = KnowledgeGraphBuilder(uri="neo4j://127.0.0.1:7687", user="neo4j", password="24112003")
     
     # Define Test Queries
     queries = [
@@ -96,6 +100,26 @@ def compare_retrievers():
             reranked_results, _, _ = retrieve(q, faiss_path, bm25_path, chunks, k=3, reranker=reranker)
             for i, res in enumerate(reranked_results):
                 f.write(f"- [Rank {i+1} | Score: {res['score']:.4f}] {res['chunk'][:300]}...\n")
+            f.write("\n")
+            
+            # 5. Graph-Enhanced Hybrid (GraphRAG)
+            f.write("### Graph-Enhanced Hybrid RAG\n")
+            f.write("**Graph Context Extracted:**\n")
+            graph_context = kg_builder.get_graph_context(q)
+            if graph_context:
+                for gc in graph_context:
+                    f.write(f"- {gc}\n")
+            else:
+                f.write("- No graph context found for the query entities.\n")
+                
+            f.write("\n**Combined Context (Graph + Hybrid RRF):**\n")
+            # We prepend the graph context to the top hybrid results
+            combined = graph_context + [res['chunk'] for res in reranked_results]
+            for i, chunk in enumerate(combined[:5]): # Show top 5 combined
+                 # Truncate for display
+                 display_chunk = chunk if isinstance(chunk, str) else str(chunk)
+                 f.write(f"- [Result {i+1}] {display_chunk[:300]}...\n")
+                 
             f.write("\n")
             
             f.write("---\n\n")

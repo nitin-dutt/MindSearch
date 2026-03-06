@@ -1,12 +1,15 @@
 # MindSearch
 
-A modern **Retrieval-Augmented Generation (RAG)** system that enables intelligent document chat using semantic search and LLM integration.
+A modern **Retrieval-Augmented Generation (RAG)** system that enables intelligent document chat using semantic search, knowledge graphs, and LLM integration.
 
 ## Features
 
 - 📄 **Multi-format Document Support**: Ingest PDF, DOCX, and TXT files
-- 🔍 **Semantic Search**: Uses sentence transformers and FAISS for efficient vector search
-- 💬 **AI-Powered Chat**: Stream responses from Ollama LLM models
+- 🔍 **Hybrid Retrieval**: Combines Dense (FAISS) and Sparse (BM25) search using Reciprocal Rank Fusion (RRF)
+- 🕸️ **Knowledge Graph Integration**: Extracts entities and relationships via LLM (Ollama) & SpaCy, storing them in a Neo4j graph database to retrieve 1-2 hop contextual subgraphs
+- 🎯 **Advanced Re-Ranking**: Uses Cross-Encoders (MS-MARCO) to re-rank retrieved context for higher accuracy
+- 🔒 **Secure Data Storage**: AES-256-GCM encryption for all document chunks stored on disk
+- 💬 **AI-Powered Chat**: Stream responses from Ollama LLM models (`llama3:8b`)
 - 🚀 **Production-Ready**: FastAPI backend with Streamlit frontend
 - ⚡ **Async Streaming**: Server-Sent Events (SSE) for real-time responses
 
@@ -16,8 +19,11 @@ A modern **Retrieval-Augmented Generation (RAG)** system that enables intelligen
 Frontend (Streamlit)
       ↓
 FastAPI Backend
-      ├── Document Ingestion → Chunking → Embedding
-      ├── Vector Search (FAISS)
+      ├── Document Ingestion → Chunking
+      │     ├── Knowledge Graph Extraction (Ollama LLM → Neo4j)
+      │     └── AES-256 Encryption & Embedding
+      ├── Hybrid Retrieval (FAISS + BM25) & Cross-Encoder Re-Ranking
+      ├── Graph Context Retrieval (Neo4j 1-2 hop relationships)
       └── LLM Integration (Ollama)
 ```
 
@@ -25,13 +31,14 @@ FastAPI Backend
 
 - Python 3.9+
 - Ollama with `llama3:8b` model installed ([ollama.ai](https://ollama.ai))
+- Neo4j Database running locally (default URI: `neo4j://127.0.0.1:7687`, user: `neo4j`, password: `24112003`)
 - pip
 
 ## Installation
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/MindSearch.git
+git clone https://github.com/nitin-dutt/MindSearch.git
 cd MindSearch
 ```
 
@@ -48,14 +55,18 @@ source venv/bin/activate
 ```bash
 pip install -r backend/requirements.txt
 ```
+*(Note: SpaCy model `en_core_web_sm` is automatically downloaded on first run via `kg_builder.py`)*
 
 ## Usage
 
-### 1. Start Ollama Service
+### 1. Start External Services
 ```bash
+# Start Ollama Model Service
 ollama serve
-# In another terminal, pull the model if needed:
+# Ensure llama3:8b is pulled
 ollama pull llama3:8b
+
+# Ensure your local Neo4j desktop or Docker instance is running
 ```
 
 ### 2. Start Backend (FastAPI)
@@ -102,33 +113,45 @@ files: [file1.pdf, file2.txt, ...]
 MindSearch/
 ├── backend/
 │   ├── main.py              # FastAPI app
-│   ├── rag_pipeline.py      # Core RAG logic
+│   ├── rag_pipeline.py      # Core RAG pipeline integrating all components
 │   ├── chunker.py           # Document processing
 │   ├── embedder.py          # Vector embeddings (FAISS)
-│   ├── retriever.py         # Semantic search
+│   ├── bm25_retriever.py    # Sparse retrieval index (BM25)
+│   ├── retriever.py         # Semantic search & Hybrid RRF fusion
+│   ├── reranker.py          # Cross-encoder re-ranking
+│   ├── encryptor.py         # AES-256 chunk encryption
+│   ├── kg_builder.py        # Entity & Relationship extraction (Neo4j, SpaCy, Ollama)
 │   ├── llm.py               # LLM streaming
+│   ├── compare_retrievers.py# Evaluation script
 │   ├── requirements.txt
 │   └── uploads/             # Uploaded documents
 │
 ├── frontend/
 │   ├── app.py               # Streamlit UI
 │   └── requirements.txt
-│
-├── .gitignore
-└── README.md
 ```
 
 ## Key Components
+
+### Knowledge Graph Pipeline (`kg_builder.py`)
+- Leverages LLM (`llama3:8b`) to extract Subject-Verb-Object relationships directly from chunks
+- Built with Neo4j to store `Entity` nodes and directional relationships
+- Uses SpaCy for query entity extraction to pull context-rich 1-hop and 2-hop graph subgraphs during retrieval
 
 ### Document Chunking (`chunker.py`)
 - Supports PDF, DOCX, TXT files
 - Sentence-based chunking with configurable size
 - Automatic encoding detection
 
-### Embeddings (`embedder.py`)
-- Uses `sentence-transformers` (all-MiniLM-L6-v2)
-- FAISS for efficient similarity search
-- Indexes stored for fast retrieval
+### Data Security (`encryptor.py`)
+- AES-GCM 256-bit encryption for all stored chunks
+- Decryption on-the-fly during retrieval
+
+### Hybrid Retrieval & Re-Ranking (`retriever.py`, `reranker.py`)
+- Dense search (FAISS + all-MiniLM-L6-v2)
+- Sparse search (BM25)
+- Reciprocal Rank Fusion (RRF) combines both results
+- Cross-Encoder re-ranking (`ms-marco-MiniLM-L-6-v2`) for top candidates
 
 ### LLM Integration (`llm.py`)
 - Streaming responses via Ollama
@@ -138,6 +161,7 @@ MindSearch/
 ## Configuration
 
 Edit backend files to customize:
+- **Neo4j Credentials**: `rag_pipeline.py` & `kg_builder.py`
 - **Chunk size**: `chunker.py` → `chunk_size` parameter
 - **Model name**: `llm.py` → `stream_generate()` model parameter
 - **Search results**: `retriever.py` → `k` parameter
@@ -147,16 +171,23 @@ Edit backend files to customize:
 
 **Backend:**
 - FastAPI, Uvicorn
-- sentence-transformers, FAISS
+- sentence-transformers, FAISS (Dense Search)
+- rank_bm25 (Sparse Search)
+- cryptography (AES-GCM Encryption)
 - pdfplumber, python-docx
 - Ollama client
-- NLTK
+- NLTK, Spacy
+- neo4j
 
 **Frontend:**
 - Streamlit
 - requests
 
 ## Troubleshooting
+
+### "Neo4j connection error"
+- Ensure Neo4j desktop or Docker container is running locally.
+- Validate the URI, User, and Password match the defaults inside `kg_builder.py`.
 
 ### "Unable to connect to RAG API"
 - Check if backend is running on `http://localhost:8000`
@@ -187,20 +218,3 @@ MIT
 ## Author
 
 Nitin Dutt - [GitHub](https://github.com/nitin-dutt)
-
-## Verification
-
-To verify the Hybrid Retrieval (BM25 + FAISS) system:
-
-1. **Run the Comparison Script:**
-   Generate a report comparing BM25, FAISS, and Hybrid results for sample queries.
-   ```bash
-   cd backend
-   python compare_retrievers.py
-   # Check retrieval_comparison.md for output
-   ```
-
-2. **Manual Check:**
-   - Upload a document via the frontend.
-   - Ask a query that relies on specific keywords (tests BM25) vs conceptual understanding (tests FAISS).
-   - The system now uses RRF to rank results from both.
