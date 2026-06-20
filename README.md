@@ -31,7 +31,7 @@ FastAPI Backend
 
 - Python 3.9+
 - Ollama with `llama3:8b` model installed ([ollama.ai](https://ollama.ai))
-- Neo4j Database running locally (default URI: `neo4j://127.0.0.1:7687`, user: `neo4j`, password: `24112003`)
+- Neo4j Database running locally (default URI: `neo4j://127.0.0.1:7687`, user: `neo4j`, password: `XXXXXXXX`)
 - pip
 
 ## Installation
