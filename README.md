@@ -133,14 +133,14 @@ MindSearch/
 
 ### 2. Hybrid GraphRAG Retrieval
 When a user submits a query:
-- **Vector Retrieval:** The query is embedded and matched against Qdrant vectors. A filter generated from the organization's access policy (user's level and groups vs. the document's minimum level and groups) is applied inside the Qdrant query, so unauthorized chunks are never returned. The same rule filters every hop of the Neo4j graph traversal.
+- **Hybrid Retrieval:** The query is matched two ways inside Qdrant: by meaning (dense embedding) and by exact words (a BM25-style keyword vector), and the two rankings are fused with Reciprocal Rank Fusion. Keywords catch names, identifiers and numbers that embeddings blur. A filter generated from the organization's access policy (user's level and groups vs. the document's minimum level and groups) is applied inside the Qdrant query, so unauthorized chunks are never returned. The same rule filters every hop of the Neo4j graph traversal.
 - **On-the-Fly Decryption:** Retrieved ciphertext chunks are decrypted in-memory into plaintext.
 - **Graph Expansion:** Query entities are identified, and Neo4j is queried for 1-hop and 2-hop contextual subgraphs connecting related concepts.
 
 ### 3. Cross-Encoder Noise Filtering
 Raw graph queries often retrieve true-but-tangential facts that degrade answer precision. MindSearch passes both the decrypted document chunks and the graph triples through a **Cross-Encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`)**:
 - Assigns direct semantic relevance scores to `[query, chunk]` and `[query, graph_fact]` pairs.
-- Trims off-topic relationships, retaining only the `top_k=3` highest-relevance graph facts and `top_k=5` document passages.
+- Trims off-topic relationships, retaining the 3 highest-relevance graph facts and up to 3 document passages (fewer when the lower ones score far below the best, see the dynamic context cutoff below).
 
 ### 4. Guardrailed Generation
 The filtered context is structured using explicit XML boundary tags:
@@ -222,6 +222,31 @@ An earlier version of this README showed 0.9695 / 1.000 and a "vector-only basel
 
 Reproduce: `python -m evaluation.generate --dataset squad --config <dense_only|dense_rerank|full>` then `python -m evaluation.judge --run-dir <dir> --judge-model <model>`; raw files are in `backend/evaluation/results/`.
 
+### Hybrid retrieval and the embedder choice
+
+SQuAD questions over a small corpus are almost too easy to retrieve (the 700-passage dev corpus already gives recall@3 near 1.0), which hides differences between retrieval methods. So the retrieval comparisons use the same 400 dev questions over a **10,000-passage corpus** (`squad_dev_xl`: every validation passage plus seeded training passages as distractors). Metrics are exact (the gold passage must be in the top k; no LLM judge); `python -m evaluation.retrieval_bench` reproduces the table.
+
+| 400 dev questions, 9,348 chunks | hit@1 | hit@3 | recall@20 |
+| :--- | :---: | :---: | :---: |
+| MiniLM dense only (previous retriever) | 0.570 | 0.740 | 0.892 |
+| BM25 keywords only | 0.715 | 0.838 | 0.943 |
+| MiniLM + BM25, fused (RRF) | 0.660 | 0.853 | 0.970 |
+| e5-base-v2 dense (best of 6 embedders tested) | 0.725 | 0.858 | 0.953 |
+| e5-base-v2 + BM25 | 0.772 | 0.892 | 0.978 |
+
+The pipeline always re-scores the candidates with the cross-encoder, and that is the number that matters. Measured through the real Qdrant pipeline (paired, same questions):
+
+| Final retrieval (after rerank) | dense (before) | **hybrid (now)** | difference (95% CI) |
+| :--- | :---: | :---: | :---: |
+| hit@1 | 0.790 | **0.848** | +0.058 (+0.035 to +0.083) |
+| hit@3 (what the model sees) | 0.858 | **0.927** | +0.070 (+0.045 to +0.098) |
+| MRR | 0.822 | **0.885** | +0.063 (+0.041 to +0.088) |
+| candidate pool recall@20 | 0.892 | **0.975** | +0.083 (+0.058 to +0.113) |
+
+With the dynamic cutoff on top (`hybrid_rerank_dynamic`) the same gain holds and exact context precision rises from 0.29 to 0.73 with about half the context words. On the frozen test set (100 questions, a small and easy corpus) hybrid is neutral to slightly positive (recall@3 before rerank 0.970 to 1.000; unchanged after), as expected when there is little to improve.
+
+**A stronger embedder was tested and rejected.** After hybrid search plus the reranker, e5-base-v2 and e5-small-v2 are statistically identical to MiniLM (difference +0.000, CI -0.007 to +0.007), while embedding about 6.5x (base) slower on CPU, so MiniLM stays. Costs: hybrid adds about 120 ms p50 retrieval latency in this single-process embedded benchmark, and the index stores one extra sparse vector per chunk.
+
 ### Follow-up questions (multi-turn chat)
 
 A follow-up like "what about its price?" means nothing to a search engine that cannot see the chat. The server rewrites it into a standalone question using the recent history ("What is the price of the Contoso acquisition?") and retrieves with that; the UI shows it as "Searched for: ...". Limits are enforced on the server: the rewriter sees at most the last 6 messages (3 turns) and the answer model the last 4 (2 turns), both capped at about 700 tokens, with old answers shortened to 600 characters (all configurable: `HISTORY_MAX_MESSAGES`, `HISTORY_GENERATION_MESSAGES`, `HISTORY_TOKEN_BUDGET`, `HISTORY_PER_MESSAGE_CHARS`). Client-supplied `system` messages are dropped, and history never affects access control.
@@ -252,7 +277,7 @@ A trivial `/healthz` endpoint is probed every 100 ms during each run. Its slowes
 What this does and does not show:
 - **Before the fix, throughput fell as users were added** (1.65 to 1.15 req/s) because every retrieval froze the server's event loop. Retrieval now runs in worker threads (`RETRIEVAL_WORKERS`, default 4), and the artificial 10 ms sleep per streamed token was removed.
 - **Median time-to-first-token is not always better with the thread pool alone** (for example 6.6 s vs 2.4 s at 20 users): the old server was unfair, letting some requests through quickly while others stalled for tens of seconds. Requests now wait in line. The tail (p95) is much better in every row.
-- **The remaining limit is CPU, not threads.** One retrieval already uses all cores, so more workers add little throughput; making each retrieval cheaper (the "fast" preset) is what raises it. That preset skips the knowledge graph, which showed no benefit on single-hop SQuAD. Select a preset with `PIPELINE_PRESET` (default `full`).
+- **The remaining limit is CPU, not threads.** One retrieval already uses all cores, so more workers add little throughput; making each retrieval cheaper (the "fast" preset) is what raises it. That preset skips the knowledge graph, which showed no benefit on single-hop SQuAD. Select a preset with `PIPELINE_PRESET` (default `full_hybrid`: hybrid retrieval, dynamic cutoff and the graph).
 - **Ingestion is idempotent:** uploading the same document twice, or a task retry after a partial failure, overwrites instead of duplicating (deterministic document and chunk ids).
 
 ### Security & Encryption Latency
@@ -280,6 +305,10 @@ Hardware: AMD Ryzen 9 8940HX, Python 3.11.7, Windows 11. Encryption cost is negl
 
 ---
 
+## Configuration
+
+Every model name, service address, path and tuning knob is defined once in `backend/settings.py`, with its default and the environment variable that overrides it (for example `GENERATOR_MODEL`, `EMBEDDING_MODEL`, `RERANKER_MODEL`, `QDRANT_URL`, `PIPELINE_PRESET`, `RETRIEVAL_WORKERS`, `HISTORY_*`). The API, the Celery worker and the evaluation harness all read it, and each evaluation run saves the settings it ran with in `meta.json`, so a result can be traced back to its configuration. Secrets (database password, token-signing secret, data-encryption key) are kept out of that object on purpose and are read only where they are used, so dumping the configuration can never leak them. A test fails the build if a model name is hard-coded anywhere else. Note that changing `EMBEDDING_MODEL` requires re-indexing the documents.
+
 ## Security Model and Limits
 
 **What is protected**
@@ -290,7 +319,7 @@ Hardware: AMD Ryzen 9 8940HX, Python 3.11.7, Windows 11. Encryption cost is negl
 - **Exposure:** Redis, Neo4j and vLLM are bound to localhost; secrets live in `.env`.
 
 **What is NOT protected (stated plainly)**
-- Entity and relationship names in Neo4j are stored in plaintext (protected by access filters and Neo4j login, not encryption). Embeddings are not encrypted.
+- Entity and relationship names in Neo4j are stored in plaintext (protected by access filters and Neo4j login, not encryption). Embeddings are not encrypted. The keyword index stores, per chunk, keyed hashes of its distinct words (the key is derived from the data key, so a stolen database cannot be matched against a word list), but it still reveals how many distinct terms a chunk has and which chunks share terms.
 - There is no TLS in this repository: put a reverse proxy with HTTPS in front before exposing it beyond a trusted network.
 - A super role sees everything; its activity is audited, not blocked.
 - Hostile text inside a document the user is allowed to read can still mislead the model (prompt injection through permitted content).
@@ -333,7 +362,7 @@ Planned next steps (items marked *done in v2* have already shipped):
 
 ### Prerequisites
 - Docker & Docker Compose
-- NVIDIA GPU with CUDA drivers installed (e.g., RTX 3090, 4090, A100, or A10)
+- NVIDIA GPU with CUDA drivers installed. Developed and measured on an 8 GB RTX 5070 Laptop GPU (one quantized 7B model at a time)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) configured
 
 ### 1. Clone the Repository
@@ -355,7 +384,9 @@ Levels, departments and super roles come from `backend/org_policy.yaml`. Ready-m
 ```bash
 docker compose up --build
 ```
-Sign in at the UI with the user you created. This starts:
+Every image and Python package version is pinned (`docker-compose.yml`, `backend/requirements*.txt`, `backend/constraints.txt`), so a build today matches the one that was measured. Each service has a health check and `depends_on` waits for it, so the API only starts once Redis, Neo4j, Qdrant and the model server are really ready (the first start downloads the model and takes several minutes). Memory limits are set per service. On Windows, Docker Desktop gets only half of the machine's RAM by default; the full stack (about 11 GB in use with the model loaded) is more comfortable with an explicit limit in `%UserProfile%\.wslconfig`, e.g. `[wsl2]` / `memory=24GB`, followed by `wsl --shutdown`.
+
+Sign in at the UI with the user you created. This starts (infrastructure ports listen on localhost only):
 - **FastAPI Gateway:** `http://localhost:8000`
 - **Streamlit UI:** `http://localhost:8501`
 - **Neo4j Browser:** `http://localhost:7474`
@@ -371,7 +402,7 @@ venv\Scripts\activate   # Windows
 # source venv/bin/activate # Linux/macOS
 
 # 2. Install dependencies
-pip install -r backend/requirements.txt
+pip install -r backend/requirements.txt -c backend/constraints.txt   # add requirements-eval.txt for the evaluation harness
 pip install -r frontend/requirements.txt
 
 # 3. Ensure local Neo4j and Ollama/vLLM instances are running
