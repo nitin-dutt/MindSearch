@@ -209,3 +209,46 @@ def test_untampered_data_still_decrypts_after_the_integrity_checks(pipeline_fact
     rag = pipeline_factory()
     rag.ingest_document(corpus_file, POLICY.make_acl("Manager"))
     assert any("1889" in c["chunk"] for c in rag.retrieve("When was the Eiffel Tower completed?", MANAGER).chunks)
+
+
+# ------------------------------------------------------ idempotent ingestion (INF-03)
+
+def _count(rag):
+    from embedder import get_qdrant_client
+    return get_qdrant_client(rag.config.qdrant_path).count(rag.config.collection).count
+
+
+def test_ingesting_the_same_file_twice_does_not_duplicate_chunks(pipeline_factory, corpus_file):
+    rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
+    id1 = rag.ingest_document(corpus_file, EVERYONE)
+    n = _count(rag)
+    id2 = rag.ingest_document(corpus_file, EVERYONE)        # a re-upload, or a Celery retry
+    assert id1 == id2 and _count(rag) == n and n >= 3
+    texts = [c["chunk"] for c in rag.retrieve("Eiffel Tower", EMPLOYEE).chunks]
+    assert len(texts) == len(set(texts))                     # no duplicate chunks reach the prompt
+
+
+def test_a_retry_after_a_partial_failure_leaves_one_copy(pipeline_factory, corpus_file):
+    """Vectors written, then the graph step 'fails' and the whole task is retried."""
+    rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
+    doc_id = rag.ingest_document(corpus_file, EVERYONE)
+    n = _count(rag)
+    rag.ingest_vectors(corpus_file, EVERYONE)                # retry re-runs the vector stage
+    assert _count(rag) == n and doc_id
+
+
+def test_same_file_with_a_different_access_rule_is_a_separate_document(pipeline_factory, corpus_file):
+    rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
+    a = rag.ingest_document(corpus_file, EVERYONE)
+    n = _count(rag)
+    b = rag.ingest_document(corpus_file, POLICY.make_acl("Manager"))
+    assert a != b and _count(rag) == 2 * n                   # permissions are never merged or overwritten
+
+
+def test_points_carry_their_document_identity(pipeline_factory, corpus_file):
+    from embedder import get_qdrant_client
+    rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
+    doc_id = rag.ingest_document(corpus_file, EVERYONE)
+    points, _ = get_qdrant_client(rag.config.qdrant_path).scroll(rag.config.collection, limit=50, with_payload=True)
+    assert {p.payload["doc_id"] for p in points} == {doc_id}
+    assert sorted(p.payload["chunk_index"] for p in points) == list(range(len(points)))

@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import uuid
 from collections import defaultdict
 
@@ -23,6 +24,7 @@ class KnowledgeGraphBuilder:
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_pass))
         self._extractor = extractor
         self._nlp = None
+        self._nlp_lock = threading.Lock()
 
     # Heavy dependencies are created on first use so constructing the builder stays cheap
     # (the API builds one at startup, and tests can inject a fake extractor).
@@ -39,13 +41,15 @@ class KnowledgeGraphBuilder:
     @property
     def nlp(self):
         if self._nlp is None:
-            import spacy
-            try:
-                self._nlp = spacy.load("en_core_web_sm")
-            except OSError:
-                from spacy.cli import download
-                download("en_core_web_sm")
-                self._nlp = spacy.load("en_core_web_sm")
+            with self._nlp_lock:               # concurrent first requests must not both load the model
+                if self._nlp is None:
+                    import spacy
+                    try:
+                        self._nlp = spacy.load("en_core_web_sm")
+                    except OSError:
+                        from spacy.cli import download
+                        download("en_core_web_sm")
+                        self._nlp = spacy.load("en_core_web_sm")
         return self._nlp
 
     def close(self):
@@ -95,12 +99,13 @@ class KnowledgeGraphBuilder:
                 MERGE (d)-[:CONTAINS]->(n)
                 """, names=names, doc_id=doc_id)
             for rel_type, rows in by_relation.items():
-                # rel_type was normalized to [A-Z0-9_]+ by clean_triples, so it is safe to inline
+                # rel_type was normalized to [A-Z0-9_]+ by clean_triples, so it is safe to inline; the backticks
+                # are required because a type may start with a digit (e.g. 33_YARD_FIELD_GOAL)
                 tx.run(f"""
                     UNWIND $rows AS row
                     MATCH (s:Entity {{name: row.s}})
                     MATCH (o:Entity {{name: row.o}})
-                    MERGE (s)-[r:{rel_type} {{doc_id: $doc_id}}]->(o)
+                    MERGE (s)-[r:`{rel_type}` {{doc_id: $doc_id}}]->(o)
                     SET r.min_rank = $min_rank, r.groups = $groups, r.users = $users
                     """, rows=rows, doc_id=doc_id, **acl_props)
 

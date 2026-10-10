@@ -131,3 +131,18 @@ def test_graph_filter_matches_the_rule_for_every_user_and_acl(kg):
         expected = {f"{PREFIX}E{i:03d}a rel {PREFIX}E{i:03d}b" for i, a in enumerate(acls) if can_access(user, a)}
         got = {f for f in facts(kg, ["E"], user, limit=1000, start_limit=1000) if " rel " in f}
         assert got == expected, f"graph disagrees with the rule for {user}"
+
+
+def test_relation_type_starting_with_a_digit_is_stored(kg):
+    """Found by loading real data: Neo4j rejects unquoted types like 33_YARD_FIELD_GOAL."""
+    kg.save_triples([T("Kicker", "33_YARD_FIELD_GOAL", "Super Bowl")], EVERYONE, doc())
+    assert f"{PREFIX}Kicker 33 yard field goal {PREFIX}Super Bowl" in facts(kg, ["Kicker"], STAFF)
+
+
+def test_retrying_the_same_document_does_not_duplicate_graph_facts(kg):
+    d = doc()
+    kg.save_triples([T("R1", "USES", "R2"), T("R2", "USES", "R3")], EVERYONE, d)
+    kg.save_triples([T("R1", "USES", "R2"), T("R2", "USES", "R3")], EVERYONE, d)    # task retry
+    with kg.driver.session() as s:
+        n = s.run("MATCH (:Entity)-[r:USES {doc_id:$d}]->(:Entity) RETURN count(r) AS c", d=d).single()["c"]
+    assert n == 2

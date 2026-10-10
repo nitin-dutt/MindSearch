@@ -8,6 +8,7 @@ from llm import stream_generate
 from encryptor import Encryptor
 from pipeline_config import PipelineConfig
 from access_policy import AccessPolicy, DocACL, User, get_default_policy
+from doc_identity import compute_doc_id
 
 
 @dataclass
@@ -43,24 +44,29 @@ class RAGPipeline:
 
     # ---------- ingestion ----------
 
-    def ingest_vectors(self, file_path, acl: DocACL):
+    def ingest_vectors(self, file_path, acl: DocACL, doc_id=None):
         """Chunk -> embed -> encrypt (bound to record + ACL) -> index in Qdrant. Returns the plaintext chunks."""
         cfg = self.config
+        doc_id = doc_id or compute_doc_id(file_path, acl)
         plaintext_chunks = run_chunking(file_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap)
         build_embeddings(plaintext_chunks, self.encryptor, acl, cfg.qdrant_path,
-                         collection_name=cfg.collection)
+                         collection_name=cfg.collection, doc_id=doc_id)
         return plaintext_chunks
 
-    def ingest_graph(self, plaintext_chunks, acl: DocACL):
+    def ingest_graph(self, plaintext_chunks, acl: DocACL, doc_id=None):
         """Extract entities/relations per chunk and write them to Neo4j.
         Returns ExtractionStats (None when the graph is disabled)."""
         if self.kg_builder is None:
             return None
-        return self.kg_builder.process_chunks(plaintext_chunks, acl)
+        return self.kg_builder.process_chunks(plaintext_chunks, acl, doc_id=doc_id)
 
     def ingest_document(self, file_path, acl: DocACL):
-        plaintext_chunks = self.ingest_vectors(file_path, acl)
-        self.ingest_graph(plaintext_chunks, acl)
+        """Idempotent: the same file with the same ACL always yields the same doc_id and point ids, so running
+        this twice (or retrying after a partial failure) leaves exactly one copy."""
+        doc_id = compute_doc_id(file_path, acl)
+        plaintext_chunks = self.ingest_vectors(file_path, acl, doc_id=doc_id)
+        self.ingest_graph(plaintext_chunks, acl, doc_id=doc_id)
+        return doc_id
 
     # ---------- retrieval ----------
 

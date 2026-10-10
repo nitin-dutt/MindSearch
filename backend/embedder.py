@@ -3,11 +3,12 @@ from qdrant_client.models import VectorParams, Distance, PointStruct, PayloadSch
 import atexit
 import uuid
 
+from doc_identity import point_id as make_point_id
 from encryptor import record_aad
 
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384  # all-MiniLM-L6-v2 output dimension
-PAYLOAD_SCHEMA_VERSION = 3  # v3: ACL fields + ciphertext bound to point id and ACL (AAD); v2 had ACL fields only
+PAYLOAD_SCHEMA_VERSION = 4  # v4: deterministic point ids + doc_id/chunk_index; v3: ACL + ciphertext bound to point id and ACL
 
 model = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
 
@@ -44,10 +45,13 @@ def close_qdrant_client(path: str):
         client.close()
 
 
-def build_embeddings(plaintext_chunks, encryptor, acl, db_path="./qdrant_db", collection_name="mindsearch_docs"):
+def build_embeddings(plaintext_chunks, encryptor, acl, db_path="./qdrant_db", collection_name="mindsearch_docs", doc_id=None):
     """Embed chunks and store them encrypted. `acl` (access_policy.DocACL) is stored on every point and
     enforced at query time; each ciphertext is bound to its point id and ACL so it cannot be moved or
-    have its permissions edited without failing decryption."""
+    have its permissions edited without failing decryption.
+
+    With a `doc_id`, point ids are deterministic (doc_id + chunk position), so re-ingesting the same document
+    overwrites its points instead of duplicating them (safe retries, safe re-uploads)."""
     acl_payload = acl.to_payload()
     client = get_qdrant_client(db_path)
 
@@ -65,15 +69,16 @@ def build_embeddings(plaintext_chunks, encryptor, acl, db_path="./qdrant_db", co
     embeddings = model.encode(plaintext_chunks, convert_to_numpy=True)
 
     points = []
-    for chunk, embedding in zip(plaintext_chunks, embeddings):
-        point_id = str(uuid.uuid4())
+    for index, (chunk, embedding) in enumerate(zip(plaintext_chunks, embeddings)):
+        point_id = make_point_id(doc_id, index) if doc_id else str(uuid.uuid4())
         encrypted = encryptor.encrypt(chunk, aad=record_aad(point_id, acl_payload))
         points.append(
             PointStruct(
                 id=point_id,
                 vector=embedding.tolist(),
                 # Qdrant payloads must be JSON serializable, so the bytes are stored as hex
-                payload={"chunk_data": encrypted.hex(), **acl_payload}
+                payload={"chunk_data": encrypted.hex(), **acl_payload,
+                         **({"doc_id": doc_id, "chunk_index": index} if doc_id else {})}
             )
         )
 
