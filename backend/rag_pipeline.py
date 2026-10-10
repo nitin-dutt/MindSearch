@@ -110,6 +110,7 @@ class RAGPipeline:
             query, cfg.qdrant_path, user, self.policy, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
             reranker=self.reranker, encryptor=self.encryptor,
             collection_name=cfg.collection, rerank_margin=cfg.rerank_margin,
+            hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool,
         )
         result.timings_ms["dense_and_rerank"] = (time.perf_counter() - t0) * 1000
 

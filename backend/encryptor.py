@@ -9,6 +9,8 @@ record (Qdrant point id) and its access rule (min_rank, groups, users). A cipher
 record, or a record whose access rule was edited in the database, fails to decrypt instead of being served.
 """
 import base64
+import hashlib
+import hmac
 import os
 import sys
 
@@ -62,6 +64,12 @@ class Encryptor:
         if len(key) != 32:
             raise ValueError("Key must be 32 bytes for AES-256")
         self.aesgcm = AESGCM(key)
+        self._key = key
+
+    def subkey(self, purpose: str) -> bytes:
+        """A separate 32-byte secret for another purpose (e.g. keying the keyword-index term ids), derived from the
+        data key so nothing new needs to be configured or backed up, and the data key itself is never used twice."""
+        return hmac.new(self._key, b"mindsearch/subkey/" + purpose.encode(), hashlib.sha256).digest()
 
     def encrypt(self, plaintext: str, aad: bytes = None) -> bytes:
         """Returns nonce (12 bytes) + ciphertext + tag. `aad` is authenticated but not stored."""
