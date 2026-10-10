@@ -99,3 +99,6 @@ docs/archive/*
 .coverage
 htmlcov/
 *.log
+
+# Local demo accounts (random passwords, local testing only)
+demo_credentials.txt
