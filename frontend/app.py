@@ -5,10 +5,13 @@ import time
 from datetime import datetime, timedelta
 from typing import List, Tuple
 import uuid
+import html
 from streamlit_local_storage import LocalStorage
 
+import os
+
 # --- CONFIGURATION ---
-API_BASE_URL = "http://localhost:8000" 
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 API_ENDPOINT = f"{API_BASE_URL}/v1/chat/completions"
 
 st.set_page_config(
@@ -30,6 +33,15 @@ if "user_id" not in st.session_state:
         new_user_id = "user-" + str(uuid.uuid4())
         st.session_state.user_id = new_user_id
         localS.setItem("rag_user_id", new_user_id)
+
+# Authentication state. The token lives only in this browser session (not in local storage), so a page
+# refresh signs the user out; that is deliberate.
+if "token" not in st.session_state:
+    st.session_state.token = None
+if "profile" not in st.session_state:
+    st.session_state.profile = None
+if "policy_opts" not in st.session_state:
+    st.session_state.policy_opts = None
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
@@ -56,6 +68,24 @@ def get_smart_time_format(dt):
     elif seconds < 86400: return f"{int(seconds / 3600)}h ago"
     elif seconds < 518400: return f"{int(seconds / 86400)}d ago"
     else: return dt.strftime('%b %d %Y, %I:%M %p')
+
+def auth_headers(extra=None):
+    headers = {"Authorization": f"Bearer {st.session_state.token}"}
+    if extra:
+        headers.update(extra)
+    return headers
+
+def sign_out(notice=None):
+    st.session_state.token = None
+    st.session_state.profile = None
+    st.session_state.policy_opts = None
+    st.session_state.messages = []
+    st.session_state.login_notice = notice
+
+def render_text(text):
+    """Message text is shown inside raw HTML, so it must be escaped: a document or a model answer
+    containing <script> or <img onerror=...> must not run in the viewer's browser."""
+    return html.escape(text).replace("\n", "<br>")
 
 def create_new_session():
     """Create a new chat session"""
@@ -87,11 +117,10 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
         "session_id": st.session_state.session_id
     }
 
-    headers = {
+    headers = auth_headers({
         "Content-Type": "application/json",
         "x-openwebui-chat-id": st.session_state.session_id,
-        "X-OpenWebUI-User-Id": st.session_state.user_id,
-    }
+    })
 
     try:
         if stream:
@@ -102,6 +131,9 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
                 stream=True,
                 timeout=120
             )
+            if response.status_code == 401:
+                sign_out("Your session expired. Please sign in again.")
+                return "Your session expired. Please sign in again.", time.perf_counter() - start_time
             response.raise_for_status()
 
             full_response = ""
@@ -590,6 +622,51 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- AUTHENTICATION GATE ---
+if not st.session_state.token:
+    st.markdown("""
+    <div class="main-header">
+        <h2>MindSearch AI</h2>
+        <p>Sign in to continue</p>
+    </div>
+    """, unsafe_allow_html=True)
+    notice = st.session_state.pop("login_notice", None)
+    if notice:
+        st.warning(notice)
+    with st.form("login_form"):
+        login_user = st.text_input("Username")
+        login_password = st.text_input("Password", type="password")
+        signed_in = st.form_submit_button("Sign in", type="primary")
+    if signed_in:
+        try:
+            r = requests.post(f"{API_BASE_URL}/v1/auth/login",
+                              json={"username": login_user, "password": login_password}, timeout=30)
+            if r.status_code == 200:
+                st.session_state.token = r.json()["access_token"]
+                st.rerun()
+            elif r.status_code == 429:
+                st.error("Too many attempts. Please wait a minute and try again.")
+            else:
+                st.error("Incorrect username or password.")
+        except requests.exceptions.RequestException:
+            st.error(f"Unable to reach the API at {API_BASE_URL}.")
+    st.stop()
+
+# Signed in: load who we are and which access levels / groups we may assign to uploads
+if st.session_state.profile is None or st.session_state.policy_opts is None:
+    try:
+        me = requests.get(f"{API_BASE_URL}/v1/me", headers=auth_headers(), timeout=30)
+        opts = requests.get(f"{API_BASE_URL}/v1/policy", headers=auth_headers(), timeout=30)
+        if me.status_code == 401 or opts.status_code == 401:
+            sign_out("Your session expired. Please sign in again.")
+            st.rerun()
+        me.raise_for_status()
+        opts.raise_for_status()
+        st.session_state.profile, st.session_state.policy_opts = me.json(), opts.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Could not load your profile: {e}")
+        st.stop()
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("favicon.png", width=80) # Ensure you have this image or comment it out
@@ -616,11 +693,35 @@ with st.sidebar:
 
     st.markdown("---")
     
+    st.subheader("Account")
+    profile = st.session_state.profile
+    st.markdown(f"**{profile['username']}**")
+    st.caption(f"Level: {profile['level']} · Groups: {', '.join(profile['groups']) or 'none'}"
+               + (" · Administrator" if profile["is_super"] else ""))
+    if st.button("Sign out", use_container_width=True):
+        sign_out()
+        st.rerun()
+
+    st.markdown("---")
+
     # --- NEW: FILE UPLOAD SECTION ---
     st.subheader("Knowledge Base")
+    opts = st.session_state.policy_opts
+    upload_level = st.selectbox(
+        "Who can read these documents (minimum level)",
+        opts["levels"],
+        index=opts["levels"].index(opts["default_level"]) if opts["default_level"] in opts["levels"] else 0,
+        help="Only people at this level or higher can retrieve these documents. You can only choose levels you hold yourself."
+    )
+    upload_groups = st.multiselect(
+        "Restrict to departments / groups (optional)",
+        opts["groups"],
+        default=[g for g in opts["groups"] if g in profile["groups"]],
+        help="If set, only members of at least one of these groups can retrieve the documents. Leave empty for no group restriction."
+    )
     uploaded_files = st.file_uploader(
         "Upload Documents", 
-        type=["pdf", "txt", "docx"], 
+        type=["pdf", "txt", "docx", "md"], 
         accept_multiple_files=True,
         key="file_uploader"
     )
@@ -639,8 +740,17 @@ with st.sidebar:
                     upload_response = requests.post(
                         f"{API_BASE_URL}/v1/ingest", 
                         files=files_payload,
-                        data={"session_id": st.session_state.session_id}
+                        data={"session_id": st.session_state.session_id, "level": upload_level,
+                              "groups": ",".join(upload_groups)},
+                        headers=auth_headers(),
+                        timeout=120
                     )
+                    if upload_response.status_code == 401:
+                        sign_out("Your session expired. Please sign in again.")
+                        st.rerun()
+                    if upload_response.status_code in (400, 403, 413, 422):
+                        st.error(upload_response.json().get("detail", "Upload rejected."))
+                        st.stop()
                     upload_response.raise_for_status()
                     
                     st.success(f"Successfully processed {len(uploaded_files)} documents!")
@@ -681,14 +791,14 @@ with chat_container:
             st.markdown(f"""
             <div class="chat-message user">
                 <div class="message-role">User</div>
-                <div class="message-content">{content}</div>
+                <div class="message-content">{render_text(content)}</div>
             </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
             <div class="chat-message assistant">
                 <div class="message-role">MindSearch AI</div>
-                <div class="message-content">{content}</div>
+                <div class="message-content">{render_text(content)}</div>
             </div>
             """, unsafe_allow_html=True)
             
