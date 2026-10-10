@@ -1,0 +1,140 @@
+# Secrets come from .env (see .env.example). Infrastructure ports are bound to localhost only.
+services:
+  redis:
+    image: redis:alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+
+  neo4j:
+    image: neo4j:latest
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
+    volumes:
+      - neo4j_data:/data
+
+  vllm_engine:
+    image: vllm/vllm-openai:latest
+    ports:
+      - "127.0.0.1:8001:8000"
+    ipc: host
+    environment:
+      - VLLM_USE_V2_MODEL_RUNNER=0
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # VLLM_MODEL lets the evaluation swap in a different judge model (see evaluation/judge.py);
+    # unset, it serves the Qwen generator exactly as before.
+    command: >
+      --model ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}
+      --quantization awq
+      --gpu-memory-utilization 0.85 
+      --max-model-len ${VLLM_MAX_LEN:-8192}
+      --enforce-eager
+
+  api:
+    build: 
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
+      - MINDSEARCH_JWT_SECRET=${MINDSEARCH_JWT_SECRET:?Set MINDSEARCH_JWT_SECRET in .env}
+      - MINDSEARCH_DATA_KEY=${MINDSEARCH_DATA_KEY:?Set MINDSEARCH_DATA_KEY in .env}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - VLLM_API_BASE=http://vllm_engine:8000/v1
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - qdrant_data:/app/qdrant_db
+      - huggingface_cache:/root/.cache/huggingface
+      - ./backend/logs:/app/logs
+      # Users and the org policy are config, not code. create_host_path: false makes compose fail loudly
+      # (instead of silently creating an empty directory) if users.yaml has not been created yet:
+      #   python backend/manage_users.py add <name> --level <Level>
+      - type: bind
+        source: ./backend/users.yaml
+        target: /app/users.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./backend/org_policy.yaml:/app/org_policy.yaml:ro
+    depends_on:
+      - redis
+      - neo4j
+      - vllm_engine
+
+  celery_worker:
+    build: 
+      context: ./backend
+    command: celery -A worker.celery_app worker --loglevel=info --pool=solo
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
+      - MINDSEARCH_DATA_KEY=${MINDSEARCH_DATA_KEY:?Set MINDSEARCH_DATA_KEY in .env}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - VLLM_API_BASE=http://vllm_engine:8000/v1
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/org_policy.yaml:/app/org_policy.yaml:ro
+      - qdrant_data:/app/qdrant_db
+      - huggingface_cache:/root/.cache/huggingface
+      # Evaluation harness: results and datasets live on the host so they survive the container
+      - ./backend/evaluation:/app/evaluation
+      - ./backend/eval_data:/app/eval_data
+      - ./backend/qdrant_eval:/app/qdrant_eval
+    depends_on:
+      - redis
+      - neo4j
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE_URL=http://api:8000
+    depends_on:
+      - api
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  redis_data:
+  neo4j_data:
+  huggingface_cache:
+  qdrant_data:
+  prometheus_data:
+  grafana_data:

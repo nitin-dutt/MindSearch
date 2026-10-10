@@ -1,0 +1,14 @@
+# Evaluation overlay: run the already-built images against the CURRENT backend/ source,
+# so code changes are picked up without rebuilding (and without re-resolving unpinned dependencies).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.eval.yml up -d vllm_engine neo4j redis api celery_worker
+#   docker compose -f docker-compose.yml -f docker-compose.eval.yml exec celery_worker python -m evaluation.generate ...
+#
+# Not for production: it bind-mounts source code into the containers.
+services:
+  api:
+    volumes:
+      - ./backend:/app
+  celery_worker:
+    volumes:
+      - ./backend:/app

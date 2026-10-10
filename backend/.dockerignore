@@ -1,0 +1,27 @@
+# Docker ignore patterns differ from .gitignore: a pattern without a leading "**/" only matches at the
+# TOP of the build context. Secrets use "**/" so they are excluded at any depth.
+
+# --- Secrets and data must never be baked into an image ---
+**/*.key
+**/.env
+**/.env.*
+users.yaml
+logs/
+qdrant_db/
+qdrant_eval/
+uploads/
+
+# --- Evaluation and tests are bind-mounted at run time by docker-compose (see the celery_worker volumes),
+#     so they are not needed in the image. This also keeps the human-calibration files out. ---
+evaluation/
+eval_data/
+tests/
+conftest.py
+
+# --- Caches, tooling, docs ---
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.md

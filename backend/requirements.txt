@@ -1,12 +1,13 @@
 # ----- Core RAG -----
 sentence-transformers
-faiss-cpu
+qdrant-client
 numpy
 
 # ----- FastAPI Backend -----
 fastapi
 uvicorn[standard]
 pydantic
+prometheus-fastapi-instrumentator
 
 # ----- Document Processing -----
 nltk
@@ -24,9 +25,18 @@ aiohttp
 
 # ----- Misc -----
 python-multipart
-
+celery
+redis
+openai
 ollama
 rank_bm25
 cryptography
+pyyaml
 spacy
 neo4j
+
+# ----- Evaluation -----
+ragas
+langchain-community<0.4.2
+langchain-openai
+datasets
