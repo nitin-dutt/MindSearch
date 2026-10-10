@@ -15,13 +15,14 @@ import time
 from typing import List, Optional
 
 import anyio
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Path, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import auth
 from access_policy import PolicyError, User, can_access
 from audit import AuditLog, text_fingerprint
+from doc_identity import compute_doc_id
 from ratelimit import RateLimiter
 from uploads import UploadError, safe_upload_path, validate_content
 
@@ -130,8 +131,8 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
     async def chat_endpoint(req: ChatRequest, user: User = Depends(current_user)):
         user_query = req.messages[-1].content
         t0 = time.perf_counter()
-        context = await anyio.to_thread.run_sync(rag.retrieve_context, user_query, user,
-                                                 limiter=retrieval_limiter())
+        result = await anyio.to_thread.run_sync(rag.retrieve, user_query, user, limiter=retrieval_limiter())
+        context = result.to_context()
         retrieval_ms = (time.perf_counter() - t0) * 1000
         audit.log("chat", user=user.id, super_role=user.is_super, query=text_fingerprint(user_query),
                   context_items=len(context))
@@ -145,12 +146,21 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
             return StreamingResponse(empty_stream(), media_type="text/event-stream",
                                      headers={"X-Retrieval-Ms": f"{retrieval_ms:.0f}"})
 
+        # Which documents the answer is based on (filenames come from the registry; the chunk filter already
+        # guaranteed this user may read them).
+        sources = result.sources()
+        if sources:
+            names = await anyio.to_thread.run_sync(rag.registry.filenames, [x["doc_id"] for x in sources])
+            sources = [{**x, "filename": names.get(x["doc_id"], "(unknown)")} for x in sources]
+
         async def event_stream():
             try:
                 async for token in rag.stream_answer(user_query, context):
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
             except Exception as e:  # noqa: BLE001
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            if sources:
+                yield f"data: {json.dumps({'sources': sources})}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream",
@@ -191,20 +201,65 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
         for original_name, path, raw in prepared:
             with open(path, "wb") as out:
                 out.write(raw)
-            task_id = dispatch(path, acl.to_payload()) if dispatch else None
-            audit.log("ingest", user=user.id, super_role=user.is_super, filename=original_name,
-                      stored_as=os.path.basename(path), acl=acl.to_payload(), task_id=task_id)
-            queued.append({"filename": original_name, "task_id": task_id})
+            doc_id = compute_doc_id(path, acl)
+            existing = await anyio.to_thread.run_sync(rag.registry.get, doc_id)
+            if existing and existing.status in ("queued", "processing", "done"):
+                os.remove(path)                    # same content + same access rule: nothing new to ingest
+                queued.append({"filename": original_name, "doc_id": doc_id, "status": existing.status,
+                               "duplicate": True, "task_id": None})
+                continue
+            await anyio.to_thread.run_sync(rag.registry.register, doc_id, acl, original_name, user.id, len(raw))
+            try:
+                task_id = dispatch(path, acl.to_payload(), doc_id) if dispatch else None
+            except Exception as e:  # noqa: BLE001 - e.g. the job queue is down
+                await anyio.to_thread.run_sync(rag.registry.set_status, doc_id, "failed", None, "could not queue the job")
+                os.remove(path)
+                audit.log("ingest_dispatch_failed", user=user.id, doc_id=doc_id, error=type(e).__name__)
+                raise HTTPException(status_code=503, detail="The ingestion queue is unavailable. Try again shortly.")
+            audit.log("ingest", user=user.id, super_role=user.is_super, doc_id=doc_id, filename=original_name,
+                      acl=acl.to_payload(), task_id=task_id)
+            queued.append({"filename": original_name, "doc_id": doc_id, "status": "queued",
+                           "duplicate": False, "task_id": task_id})
 
-        return {"status": "success", "processed": len(queued),
+        return {"status": "success", "processed": sum(1 for d in queued if not d["duplicate"]),
                 "message": "Documents queued for background processing", "documents": queued}
+
+    # ------------------------------------------------------------- documents
+
+    DOC_ID = Path(..., pattern=r"^[0-9a-f]{32}$", description="document id")
+
+    @app.get("/v1/documents")
+    async def list_documents(user: User = Depends(current_user)):
+        """Documents this user may read, newest first, with their processing status."""
+        entries = await anyio.to_thread.run_sync(rag.registry.list, user)
+        return {"documents": [e.to_public(policy, include_uploader=user.is_super or e.uploader == user.id) for e in entries]}
+
+    @app.get("/v1/documents/{doc_id}")
+    async def get_document(doc_id: str = DOC_ID, user: User = Depends(current_user)):
+        entry = await anyio.to_thread.run_sync(rag.registry.get, doc_id, user)
+        if entry is None:                          # missing and not-allowed look identical: existence is not leaked
+            raise HTTPException(status_code=404, detail="Document not found")
+        return entry.to_public(policy, include_uploader=user.is_super or entry.uploader == user.id)
+
+    @app.delete("/v1/documents/{doc_id}")
+    async def delete_document(doc_id: str = DOC_ID, user: User = Depends(current_user)):
+        """Remove a document everywhere (chunks, graph facts, registry entry). Allowed for the uploader or a super role."""
+        entry = await anyio.to_thread.run_sync(rag.registry.get, doc_id, user)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        if not (user.is_super or entry.uploader == user.id):
+            audit.log("document_delete_denied", user=user.id, doc_id=doc_id)
+            raise HTTPException(status_code=403, detail="Only the uploader or an administrator can delete a document.")
+        report = await anyio.to_thread.run_sync(rag.delete_document, doc_id)
+        audit.log("document_delete", user=user.id, super_role=user.is_super, doc_id=doc_id)
+        return {"status": "deleted", "doc_id": doc_id, **report}
 
     return app
 
 
-def _celery_dispatch(path, acl_payload):
+def _celery_dispatch(path, acl_payload, doc_id):
     from worker import process_document_task
-    return process_document_task.delay(path, acl_payload).id
+    return process_document_task.delay(path, acl_payload, doc_id).id
 
 
 def _set_torch_threads():

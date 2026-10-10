@@ -14,6 +14,10 @@ import api  # noqa: E402
 import auth  # noqa: E402
 import uploads  # noqa: E402
 from access_policy import AccessPolicy, PolicyError  # noqa: E402
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
+from doc_registry import DocumentRegistry  # noqa: E402
+from encryptor import Encryptor  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 from audit import AuditLog  # noqa: E402
 from ratelimit import RateLimiter  # noqa: E402
 
@@ -23,13 +27,20 @@ SECRET = "s" * 40
 
 
 class FakeRag:
-    def __init__(self, context=True):
-        self.policy, self.context = POLICY, context
-        self.asked_as = []
+    def __init__(self, registry, context=True):
+        self.policy, self.context, self.registry = POLICY, context, registry
+        self.asked_as, self.deleted, self.source_doc_id = [], [], None
 
-    def retrieve_context(self, query, user):
+    def retrieve(self, query, user):
         self.asked_as.append(user)
-        return [f"<doc>visible to {user.id} (rank {user.rank})</doc>"] if self.context else []
+        ctx = [f"<doc>visible to {user.id} (rank {user.rank})</doc>"] if self.context else []
+        srcs = [{"doc_id": self.source_doc_id, "chunk_index": 2}] if (self.context and self.source_doc_id) else []
+        return SimpleNamespace(to_context=lambda: ctx, sources=lambda: srcs)
+
+    def delete_document(self, doc_id):
+        self.deleted.append(doc_id)
+        self.registry.delete(doc_id)
+        return {"chunks_deleted": 3}
 
     async def stream_answer(self, query, context):
         for tok in ("Hello ", "world"):
@@ -44,10 +55,11 @@ def env(tmp_path):
         auth.UserRecord("root", auth.hash_password("pw-root"), "Staff", (), ("Admin",)),
     ]
     store = auth.UserStore(records)
-    dispatched, rag = [], FakeRag()
+    registry = DocumentRegistry(str(tmp_path / "reg"), Encryptor(key=AESGCM.generate_key(bit_length=256)), POLICY)
+    dispatched, rag = [], FakeRag(registry)
     audit = AuditLog(str(tmp_path / "audit.jsonl"))
     app = api.create_app(rag, store, SECRET, upload_dir=str(tmp_path / "up"),
-                         dispatch=lambda path, acl: dispatched.append((path, acl)) or f"task-{len(dispatched)}",
+                         dispatch=lambda path, acl, doc_id: dispatched.append((path, acl)) or f"task-{len(dispatched)}",
                          audit=audit, login_limiter=RateLimiter(max_attempts=5, window_seconds=60))
     client = TestClient(app)
 
@@ -57,7 +69,7 @@ def env(tmp_path):
         return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
     return type("Env", (), dict(client=client, rag=rag, dispatched=dispatched, audit_path=str(tmp_path / "audit.jsonl"),
-                                upload_dir=str(tmp_path / "up"), login=staticmethod(login), store=store))
+                                upload_dir=str(tmp_path / "up"), login=staticmethod(login), store=store, registry=registry))
 
 
 CHAT = {"messages": [{"role": "user", "content": "what is the secret plan?"}]}
@@ -245,4 +257,138 @@ def test_audit_log_records_events_without_storing_query_text(env):
 def test_inconsistent_user_file_fails_at_startup(tmp_path):
     bad = auth.UserStore([auth.UserRecord("x", auth.hash_password("p"), "Intern")])
     with pytest.raises(PolicyError):
-        api.create_app(FakeRag(), bad, SECRET, upload_dir=str(tmp_path / "up"))
+        api.create_app(FakeRag(None), bad, SECRET, upload_dir=str(tmp_path / "up"))
+
+
+# --------------------------------------------------------------------- documents (INF-04, INF-05)
+
+def doc_id_of(response):
+    return response.json()["documents"][0]["doc_id"]
+
+
+def test_upload_registers_the_document_as_queued(env):
+    r = upload(env, env.login("staff"), name="report.txt")
+    d = r.json()["documents"][0]
+    assert d["status"] == "queued" and d["duplicate"] is False and len(d["doc_id"]) == 32
+    entry = env.registry.get(d["doc_id"])
+    assert entry.filename == "report.txt" and entry.uploader == "staff" and entry.status == "queued"
+
+
+def test_uploading_identical_content_twice_does_not_queue_it_again(env):
+    h = env.login("staff")
+    first = upload(env, h, name="a.txt", data=b"same content")
+    second = upload(env, h, name="renamed.txt", data=b"same content")
+    assert second.json()["documents"][0]["duplicate"] is True and second.json()["processed"] == 0
+    assert doc_id_of(first) == doc_id_of(second) and len(env.dispatched) == 1
+    assert len(os.listdir(env.upload_dir)) == 1                # the redundant plaintext copy was removed
+
+
+def test_a_failed_document_is_queued_again_on_re_upload(env):
+    h = env.login("staff")
+    first = upload(env, h, data=b"retry me")
+    env.registry.set_status(doc_id_of(first), "failed", error="Neo4j unavailable")
+    again = upload(env, h, data=b"retry me")
+    assert again.json()["documents"][0]["duplicate"] is False and len(env.dispatched) == 2
+    assert env.registry.get(doc_id_of(first)).status == "queued"
+
+
+def test_the_same_file_with_a_different_access_rule_is_a_separate_document(env):
+    root = env.login("root")
+    a = upload(env, root, data=b"shared bytes", level="Staff")
+    b = upload(env, root, data=b"shared bytes", level="Manager")
+    assert doc_id_of(a) != doc_id_of(b) and len(env.dispatched) == 2
+
+
+def test_failure_to_queue_the_job_marks_the_document_failed_and_returns_503(env, monkeypatch):
+    def boom(path, acl, doc_id):
+        raise ConnectionError("redis down")
+    env.client.app.router  # keep a reference to the app object alive
+    app = api.create_app(env.rag, env.store, SECRET, upload_dir=env.upload_dir, dispatch=boom,
+                         audit=AuditLog(env.audit_path), login_limiter=RateLimiter(max_attempts=100))
+    client = TestClient(app)
+    tok = client.post("/v1/auth/login", json={"username": "staff", "password": "pw-staff"}).json()["access_token"]
+    r = client.post("/v1/ingest", headers={"Authorization": f"Bearer {tok}"}, data={"session_id": "s"},
+                    files=[("files", ("x.txt", io.BytesIO(b"queue is down")))])
+    assert r.status_code == 503
+    [entry] = env.registry.list(env.rag.policy.superuser())
+    assert entry.status == "failed" and os.listdir(env.upload_dir) == []
+
+
+def test_listing_shows_only_what_the_user_may_read_with_live_status(env):
+    root, staff, mgr = env.login("root"), env.login("staff"), env.login("mgr")
+    open_doc = upload(env, root, name="canteen.txt", data=b"canteen", level="Staff")
+    mgr_doc = upload(env, root, name="board.txt", data=b"board memo", level="Manager")
+    env.registry.set_status(doc_id_of(open_doc), "done", chunks=4)
+
+    staff_docs = env.client.get("/v1/documents", headers=staff).json()["documents"]
+    assert [d["filename"] for d in staff_docs] == ["canteen.txt"]
+    assert staff_docs[0]["status"] == "done" and staff_docs[0]["chunks"] == 4 and staff_docs[0]["level"] == "Staff"
+    assert "uploaded_by" not in staff_docs[0]                   # other people's uploader is not shown
+    assert {d["filename"] for d in env.client.get("/v1/documents", headers=mgr).json()["documents"]} == {"canteen.txt", "board.txt"}
+    root_docs = env.client.get("/v1/documents", headers=root).json()["documents"]
+    assert all(d["uploaded_by"] == "root" for d in root_docs)
+
+
+def test_a_document_the_user_cannot_read_looks_like_it_does_not_exist(env):
+    mgr_doc = upload(env, env.login("root"), data=b"board memo", level="Manager")
+    d = doc_id_of(mgr_doc)
+    staff = env.login("staff")
+    assert env.client.get(f"/v1/documents/{d}", headers=staff).status_code == 404
+    assert env.client.delete(f"/v1/documents/{d}", headers=staff).status_code == 404
+    assert env.client.get(f"/v1/documents/{'0' * 32}", headers=staff).status_code == 404     # same answer as for a real one
+    assert env.rag.deleted == []
+
+
+def test_malformed_document_ids_are_rejected(env):
+    h = env.login("staff")
+    for bad in ("short", "g" * 32, "A" * 32, "../etc"):
+        assert env.client.get(f"/v1/documents/{bad}", headers=h).status_code in (404, 422)
+    assert env.client.get("/v1/documents/" + "a" * 31, headers=h).status_code == 422
+
+
+def test_only_the_uploader_or_a_super_role_can_delete(env):
+    owner = env.login("mgr")
+    d = doc_id_of(upload(env, owner, data=b"manager upload", level="Staff"))       # readable by staff too
+    staff = env.login("staff")
+    assert env.client.get(f"/v1/documents/{d}", headers=staff).status_code == 200  # visible...
+    denied = env.client.delete(f"/v1/documents/{d}", headers=staff)
+    assert denied.status_code == 403 and env.rag.deleted == []                    # ...but not deletable by others
+    ok = env.client.delete(f"/v1/documents/{d}", headers=owner)
+    assert ok.status_code == 200 and ok.json()["status"] == "deleted" and env.rag.deleted == [d]
+    assert env.client.get(f"/v1/documents/{d}", headers=owner).status_code == 404
+
+
+def test_a_super_role_can_delete_anyones_document(env):
+    d = doc_id_of(upload(env, env.login("staff"), data=b"staff upload"))
+    assert env.client.delete(f"/v1/documents/{d}", headers=env.login("root")).status_code == 200
+    assert env.rag.deleted == [d]
+
+
+def test_document_routes_require_login(env):
+    assert env.client.get("/v1/documents").status_code == 401
+    assert env.client.delete("/v1/documents/" + "a" * 32).status_code == 401
+
+
+def test_chat_ends_with_the_sources_it_used(env):
+    h = env.login("staff")
+    d = doc_id_of(upload(env, h, name="handbook.txt", data=b"employee handbook"))
+    env.rag.source_doc_id = d
+    r = chat(env, h)
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and line != "data: [DONE]"]
+    sources = next(e["sources"] for e in events if "sources" in e)
+    assert sources == [{"doc_id": d, "chunk_index": 2, "filename": "handbook.txt"}]
+    assert r.text.strip().endswith("[DONE]") and r.text.index("sources") > r.text.index("Hello")
+
+
+def test_no_sources_event_when_nothing_was_retrieved(env):
+    env.rag.context = False
+    assert "sources" not in chat(env, env.login("staff")).text
+
+
+def test_document_actions_are_audited_without_filenames(env):
+    d = doc_id_of(upload(env, env.login("mgr"), name="confidential_plan.txt", data=b"x" * 20))
+    env.client.delete(f"/v1/documents/{d}", headers=env.login("mgr"))
+    raw = open(env.audit_path, encoding="utf-8").read()
+    assert "document_delete" in raw and d in raw
+    assert "confidential_plan" in raw.split("\"event\": \"ingest\"")[1].split("\n")[0]   # upload is audited with its name...
+    assert "confidential_plan" not in raw.split("document_delete")[1]                        # ...deletion logs only the id

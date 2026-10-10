@@ -22,20 +22,21 @@ DELAY = 0.3
 
 
 class SlowRag:
-    """retrieve_context BLOCKS (time.sleep) like real CPU-bound work, and records how many ran at once."""
+    """retrieve BLOCKS (time.sleep) like real CPU-bound work, and records how many ran at once."""
     def __init__(self, tokens=2):
         self.policy, self.tokens = POLICY, tokens
         self.active = self.max_active = 0
         self._lock = threading.Lock()
 
-    def retrieve_context(self, query, user):
+    def retrieve(self, query, user):
         with self._lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
         time.sleep(DELAY)
         with self._lock:
             self.active -= 1
-        return ["<doc>some context</doc>"]
+        from types import SimpleNamespace
+        return SimpleNamespace(to_context=lambda: ["<doc>some context</doc>"], sources=lambda: [])
 
     async def stream_answer(self, query, context):
         for i in range(self.tokens):
