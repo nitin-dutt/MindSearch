@@ -41,22 +41,19 @@ def upload(headers, name, data, level):
     r.raise_for_status()
 
 
-def wait_until_queue_drained(label, timeout=1200):
-    """Ingestion is asynchronous and the worker handles one document at a time, so wait until the Celery queue
-    is empty and nothing is running (counting points would return too early while uploads are still queued)."""
-    from worker import celery_app
+def wait_until_documents_finished(headers, label, timeout=1500):
+    """Ingestion is asynchronous. The document registry says exactly where each upload is, so wait until none of
+    them is 'queued' or 'processing' (more reliable than asking the single-process Celery worker, which cannot answer
+    while it is busy, and than counting points, which settle before the last upload even starts)."""
     start = time.time()
-    time.sleep(3)
-    quiet = 0
     while time.time() - start < timeout:
-        inspect = celery_app.control.inspect(timeout=2)
-        busy = sum(len(v) for d in (inspect.active() or {}, inspect.reserved() or {}, inspect.scheduled() or {}) for v in d.values())
-        quiet = quiet + 1 if busy == 0 else 0
-        if quiet >= 3:                      # idle for three consecutive checks
+        docs = requests.get(f"{API}/v1/documents", headers=headers).json()["documents"]
+        if docs and all(d["status"] in ("done", "failed") for d in docs):
             break
         time.sleep(4)
     n = points()
-    print(f"{label}: {n} points")
+    summary = ", ".join(f"{d['filename']}={d['status']}({d['chunks']})" for d in docs)
+    print(f"{label}: {n} points | {summary}")
     return n
 
 
@@ -72,10 +69,10 @@ def main():
     if args.with_demo:
         upload(headers, "canteen.txt", b"Canteen hours: the cafeteria is open from eight to four on weekdays. Lunch is served between twelve and two, and the soup of the day is tomato.\n", "Employee")
         upload(headers, "board_memo.txt", b"Board memo: the acquisition of Contoso will be announced on the first of March. The purchase price is two hundred million dollars and Sarah Jenkins will lead the integration.\n", "Manager")
-    first = wait_until_queue_drained("after first upload")
+    first = wait_until_documents_finished(headers, "after first upload")
     if args.twice:
         upload(headers, "squad_corpus.md", corpus, "Employee")
-        second = wait_until_queue_drained("after uploading the same corpus again")
+        second = wait_until_documents_finished(headers, "after uploading the same corpus again")
         print("IDEMPOTENT: point count unchanged" if second == first else f"NOT IDEMPOTENT: {first} -> {second}")
 
 

@@ -405,9 +405,10 @@ Allowed types: `.pdf .docx .txt .md`, up to 50 MB (`MAX_UPLOAD_MB`). Filenames a
   "status": "success",
   "processed": 1,
   "message": "Documents queued for background processing",
-  "documents": [{"filename": "financial_report_Q3.pdf", "task_id": "..."}]
+  "documents": [{"filename": "financial_report_Q3.pdf", "doc_id": "0c13...", "status": "queued", "duplicate": false, "task_id": "..."}]
 }
 ```
+Each upload is registered immediately, so its progress is visible (see Documents below). Uploading identical content with the same access rule again is detected (`"duplicate": true`) and not queued twice; the same file with a different access rule is a separate document.
 
 ### 3. Chat Completions (SSE Streaming)
 Streams real-time answers grounded strictly in retrieved encrypted chunks and knowledge graph subgraphs.
@@ -426,6 +427,21 @@ Content-Type: application/json
   "session_id": "session-123"
 }
 ```
+
+### 4. Documents
+```http
+GET    /v1/documents                 # documents this user may read, newest first, with live status
+GET    /v1/documents/{doc_id}        # one document (404 if it does not exist OR the user may not read it)
+DELETE /v1/documents/{doc_id}        # removes chunks, graph facts and the registry entry
+Authorization: Bearer <token>
+```
+Each entry has `doc_id`, `filename`, `status` (`queued`, `processing`, `done` or `failed`), `chunks`, `level`, `groups`, `uploaded_at` and, for the uploader or an administrator, `uploaded_by`. Only the uploader or a super role can delete. Filenames and uploader names are stored encrypted. Deleting is idempotent and also removes graph entities no other document uses.
+
+**Sources in chat.** The chat stream ends with one extra event before `[DONE]`, naming the documents the answer was based on:
+```
+data: {"sources": [{"doc_id": "0c13...", "filename": "board_memo.txt", "chunk_index": 0}]}
+```
+`chunk_index` says which part of the document the text came from. This is the hook for showing the original document (and, later, page numbers and images) next to an answer.
 
 ---
 
