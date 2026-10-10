@@ -17,9 +17,10 @@ from typing import List, Optional
 import anyio
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Path, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import auth
+import conversation as conv
 from access_policy import PolicyError, User, can_access
 from audit import AuditLog, text_fingerprint
 from doc_identity import compute_doc_id
@@ -39,13 +40,14 @@ class LoginRequest(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: str = Field(max_length=20)
+    content: str = Field(max_length=conv.MAX_QUESTION_CHARS)
 
 
 class ChatRequest(BaseModel):
     model: str = "rag-model"
-    messages: List[ChatMessage]
+    # The whole conversation so far, newest last. The server trims it (conversation.py); clients may send up to 60.
+    messages: List[ChatMessage] = Field(min_length=1, max_length=60)
     stream: bool = True
     session_id: Optional[str] = None
 
@@ -56,8 +58,13 @@ def _unauthorized(detail="Not authenticated"):
 
 def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads", dispatch=None,
                audit: AuditLog = None, login_limiter: RateLimiter = None, token_ttl=3600,
-               retrieval_workers=None) -> FastAPI:
+               retrieval_workers=None, rewriter=None) -> FastAPI:
     policy = rag.policy
+    if rewriter is None:
+        from llm import complete_chat
+        cfg = getattr(rag, "config", None)
+        rewriter = conv.QueryRewriter(getattr(cfg, "generator_model", ""), complete_chat,
+                                      enabled=cfg is not None and os.getenv("REWRITE_ENABLED", "1") == "1")
     # Retrieval is CPU-heavy (embedding, cross-encoder, graph lookup). It runs in worker threads so the event
     # loop stays free for streaming and health checks, and the pool is capped so a burst of users cannot
     # oversubscribe the CPU (extra requests simply wait their turn).
@@ -129,13 +136,19 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
 
     @app.post("/v1/chat/completions")
     async def chat_endpoint(req: ChatRequest, user: User = Depends(current_user)):
-        user_query = req.messages[-1].content
+        try:
+            question, history = conv.split_conversation(req.messages)
+        except conv.ConversationError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        history = conv.trim_history(history)
+        # A follow-up ("what about its price?") is rewritten into a standalone question; retrieval searches with that.
+        user_query, rewritten = await rewriter.rewrite(history, question)
         t0 = time.perf_counter()
         result = await anyio.to_thread.run_sync(rag.retrieve, user_query, user, limiter=retrieval_limiter())
         context = result.to_context()
         retrieval_ms = (time.perf_counter() - t0) * 1000
-        audit.log("chat", user=user.id, super_role=user.is_super, query=text_fingerprint(user_query),
-                  context_items=len(context))
+        audit.log("chat", user=user.id, super_role=user.is_super, query=text_fingerprint(question),
+                  rewritten=rewritten, history_messages=len(history), context_items=len(context))
 
         # Nothing retrieved (empty index, or nothing this user may see): answer deterministically
         # without calling the LLM, so it can't answer from thin air.
@@ -154,8 +167,10 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
             sources = [{**x, "filename": names.get(x["doc_id"], "(unknown)")} for x in sources]
 
         async def event_stream():
+            if rewritten:
+                yield f"data: {json.dumps({'standalone_question': user_query})}\n\n"
             try:
-                async for token in rag.stream_answer(user_query, context):
+                async for token in rag.stream_answer(user_query, context, conv.for_generation(history)):
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
             except Exception as e:  # noqa: BLE001
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"

@@ -129,7 +129,7 @@ class RAGPipeline:
 
     # ---------- generation ----------
 
-    async def stream_answer(self, query, context):
+    async def stream_answer(self, query, context, history=None):
         ctx = "\n\n".join(context)
-        async for token in stream_generate(self.config.generator_model, query, ctx):
+        async for token in stream_generate(self.config.generator_model, query, ctx, history):
             yield token
