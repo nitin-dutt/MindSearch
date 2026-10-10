@@ -220,9 +220,9 @@ def _count(rag):
 
 def test_ingesting_the_same_file_twice_does_not_duplicate_chunks(pipeline_factory, corpus_file):
     rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
-    id1 = rag.ingest_document(corpus_file, EVERYONE)
+    id1 = rag.ingest_document(corpus_file, EVERYONE)["doc_id"]
     n = _count(rag)
-    id2 = rag.ingest_document(corpus_file, EVERYONE)        # a re-upload, or a Celery retry
+    id2 = rag.ingest_document(corpus_file, EVERYONE)["doc_id"]        # a re-upload, or a Celery retry
     assert id1 == id2 and _count(rag) == n and n >= 3
     texts = [c["chunk"] for c in rag.retrieve("Eiffel Tower", EMPLOYEE).chunks]
     assert len(texts) == len(set(texts))                     # no duplicate chunks reach the prompt
@@ -231,7 +231,7 @@ def test_ingesting_the_same_file_twice_does_not_duplicate_chunks(pipeline_factor
 def test_a_retry_after_a_partial_failure_leaves_one_copy(pipeline_factory, corpus_file):
     """Vectors written, then the graph step 'fails' and the whole task is retried."""
     rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
-    doc_id = rag.ingest_document(corpus_file, EVERYONE)
+    doc_id = rag.ingest_document(corpus_file, EVERYONE)["doc_id"]
     n = _count(rag)
     rag.ingest_vectors(corpus_file, EVERYONE)                # retry re-runs the vector stage
     assert _count(rag) == n and doc_id
@@ -239,16 +239,60 @@ def test_a_retry_after_a_partial_failure_leaves_one_copy(pipeline_factory, corpu
 
 def test_same_file_with_a_different_access_rule_is_a_separate_document(pipeline_factory, corpus_file):
     rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
-    a = rag.ingest_document(corpus_file, EVERYONE)
+    a = rag.ingest_document(corpus_file, EVERYONE)["doc_id"]
     n = _count(rag)
-    b = rag.ingest_document(corpus_file, POLICY.make_acl("Manager"))
+    b = rag.ingest_document(corpus_file, POLICY.make_acl("Manager"))["doc_id"]
     assert a != b and _count(rag) == 2 * n                   # permissions are never merged or overwritten
 
 
 def test_points_carry_their_document_identity(pipeline_factory, corpus_file):
     from embedder import get_qdrant_client
     rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
-    doc_id = rag.ingest_document(corpus_file, EVERYONE)
+    doc_id = rag.ingest_document(corpus_file, EVERYONE)["doc_id"]
     points, _ = get_qdrant_client(rag.config.qdrant_path).scroll(rag.config.collection, limit=50, with_payload=True)
     assert {p.payload["doc_id"] for p in points} == {doc_id}
     assert sorted(p.payload["chunk_index"] for p in points) == list(range(len(points)))
+
+
+# ------------------------------------------------ source links and deletion (INF-04)
+
+def test_retrieved_chunks_point_back_to_their_document(pipeline_factory, corpus_file):
+    rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
+    info = rag.ingest_document(corpus_file, EVERYONE)
+    result = rag.retrieve("When was the Eiffel Tower completed?", EMPLOYEE)
+    assert result.chunks and all(c["doc_id"] == info["doc_id"] and isinstance(c["chunk_index"], int) for c in result.chunks)
+    assert result.sources() == [{"doc_id": info["doc_id"], "chunk_index": result.chunks[0]["chunk_index"]}]
+
+
+def test_ingest_reports_how_many_chunks_were_written(pipeline_factory, corpus_file):
+    rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
+    info = rag.ingest_document(corpus_file, EVERYONE)
+    assert info["chunks"] == _count(rag) >= 3
+
+
+def test_deleting_a_document_removes_its_chunks_and_registry_entry(pipeline_factory, corpus_file, tmp_path):
+    other = tmp_path / "other.md"
+    other.write_text("The Great Wall of China was built over many centuries to protect northern borders.\n", encoding="utf-8")
+    rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
+    first = rag.ingest_document(corpus_file, EVERYONE)
+    second = rag.ingest_document(str(other), EVERYONE)
+    rag.registry.register(first["doc_id"], EVERYONE, "corpus.md", "admin", 10)
+    rag.registry.register(second["doc_id"], EVERYONE, "other.md", "admin", 10)
+
+    report = rag.delete_document(first["doc_id"])
+    assert report["chunks_deleted"] == first["chunks"]
+    assert rag.retrieve("Eiffel Tower", EMPLOYEE).chunks == [] or all(
+        c["doc_id"] == second["doc_id"] for c in rag.retrieve("Eiffel Tower", EMPLOYEE).chunks)
+    assert rag.registry.get(first["doc_id"]) is None
+    assert rag.registry.get(second["doc_id"]) is not None                       # the other document is untouched
+    assert any("Great Wall" in c["chunk"] for c in rag.retrieve("Great Wall of China", EMPLOYEE).chunks)
+    assert _count(rag) == second["chunks"]
+
+
+def test_deleting_twice_is_harmless(pipeline_factory, corpus_file):
+    rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
+    info = rag.ingest_document(corpus_file, EVERYONE)
+    rag.registry.register(info["doc_id"], EVERYONE, "c.md", "admin", 1)
+    rag.delete_document(info["doc_id"])
+    again = rag.delete_document(info["doc_id"])
+    assert again["chunks_deleted"] == 0 and _count(rag) == 0

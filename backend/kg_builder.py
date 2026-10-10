@@ -112,6 +112,22 @@ class KnowledgeGraphBuilder:
         with self.driver.session() as session:
             session.execute_write(write)
 
+    def delete_document(self, doc_id) -> dict:
+        """Remove everything one document contributed: its relationships, its Document node, and any entity that no
+        other document still uses. Idempotent."""
+        def work(tx):
+            entities = [r["name"] for r in tx.run(
+                "MATCH (:Document {id: $id})-[:CONTAINS]->(n:Entity) RETURN n.name AS name", id=doc_id)]
+            edges = tx.run("MATCH (:Entity)-[r {doc_id: $id}]->(:Entity) DELETE r RETURN count(r) AS c", id=doc_id).single()["c"]
+            tx.run("MATCH (d:Document {id: $id}) DETACH DELETE d", id=doc_id)
+            orphans = tx.run(
+                "UNWIND $names AS name MATCH (n:Entity {name: name}) WHERE NOT (n)--() DELETE n RETURN count(n) AS c",
+                names=entities).single()["c"]
+            return {"relationships": edges, "entities_removed": orphans}
+
+        with self.driver.session() as session:
+            return session.execute_write(work)
+
     # ------------------------------------------------------------ retrieval
 
     def get_graph_context(self, query: str, user: User) -> list:

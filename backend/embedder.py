@@ -1,5 +1,6 @@
 from sentence_transformers import SentenceTransformer
-from qdrant_client.models import VectorParams, Distance, PointStruct, PayloadSchemaType
+from qdrant_client.models import (VectorParams, Distance, PointStruct, PayloadSchemaType, Filter,
+                                  FieldCondition, MatchValue, FilterSelector)
 import atexit
 import uuid
 
@@ -65,6 +66,7 @@ def build_embeddings(plaintext_chunks, encryptor, acl, db_path="./qdrant_db", co
             client.create_payload_index(collection_name, "min_rank", PayloadSchemaType.INTEGER)
             client.create_payload_index(collection_name, "groups", PayloadSchemaType.KEYWORD)
             client.create_payload_index(collection_name, "users", PayloadSchemaType.KEYWORD)
+            client.create_payload_index(collection_name, "doc_id", PayloadSchemaType.KEYWORD)
 
     embeddings = model.encode(plaintext_chunks, convert_to_numpy=True)
 
@@ -91,11 +93,12 @@ def build_embeddings(plaintext_chunks, encryptor, acl, db_path="./qdrant_db", co
 
 def search_embeddings(query, user, policy, db_path="./qdrant_db", collection_name="mindsearch_docs", k=5):
     """Dense search restricted to what `user` may read. There is deliberately no default user.
-    Returns (scores, encrypted payloads, associated data for decryption), best first."""
+    Returns (scores, encrypted payloads, associated data for decryption, source metadata), best first.
+    Source metadata is {doc_id, chunk_index} per hit, so answers can point back to their document."""
     client = get_qdrant_client(db_path)
 
     if not client.collection_exists(collection_name=collection_name):
-        return [], [], []
+        return [], [], [], []
 
     q_vector = model.encode([query], convert_to_numpy=True)[0]
     query_filter = policy.qdrant_filter(user)  # None only for super roles
@@ -107,7 +110,7 @@ def search_embeddings(query, user, policy, db_path="./qdrant_db", collection_nam
         query_filter=query_filter
     )
 
-    scores, payloads, aads = [], [], []
+    scores, payloads, aads, metas = [], [], [], []
     # Qdrant client.query_points returns a QueryResponse which contains .points
     points = results.points if hasattr(results, 'points') else results
     for hit in points:
@@ -116,5 +119,24 @@ def search_embeddings(query, user, policy, db_path="./qdrant_db", collection_nam
         hex_data = hit.payload.get("chunk_data", "")
         payloads.append(bytes.fromhex(hex_data) if hex_data else b'')
         aads.append(record_aad(hit.id, hit.payload))
+        metas.append({"doc_id": hit.payload.get("doc_id"), "chunk_index": hit.payload.get("chunk_index")})
 
-    return scores, payloads, aads
+    return scores, payloads, aads, metas
+
+
+def count_document_chunks(doc_id, db_path="./qdrant_db", collection_name="mindsearch_docs"):
+    client = get_qdrant_client(db_path)
+    if not client.collection_exists(collection_name=collection_name):
+        return 0
+    flt = Filter(must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))])
+    return client.count(collection_name, count_filter=flt, exact=True).count
+
+
+def delete_document_chunks(doc_id, db_path="./qdrant_db", collection_name="mindsearch_docs"):
+    """Remove every chunk of one document. Returns how many were deleted. Idempotent."""
+    client = get_qdrant_client(db_path)
+    n = count_document_chunks(doc_id, db_path, collection_name)
+    if n:
+        flt = Filter(must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))])
+        client.delete(collection_name, points_selector=FilterSelector(filter=flt), wait=True)
+    return n

@@ -146,3 +146,32 @@ def test_retrying_the_same_document_does_not_duplicate_graph_facts(kg):
     with kg.driver.session() as s:
         n = s.run("MATCH (:Entity)-[r:USES {doc_id:$d}]->(:Entity) RETURN count(r) AS c", d=d).single()["c"]
     assert n == 2
+
+
+# ------------------------------------------------ deleting a document's graph facts (INF-04)
+
+def test_deleting_a_document_removes_only_its_own_facts_and_orphan_entities(kg):
+    d1, d2 = doc(), doc()
+    kg.save_triples([T("Shared", "USES", "OnlyInOne"), T("Shared", "USES", "AlsoInBoth")], EVERYONE, d1)
+    kg.save_triples([T("Shared", "USES", "AlsoInBoth"), T("Shared", "USES", "OnlyInTwo")], EVERYONE, d2)
+
+    report = kg.delete_document(d1)
+    assert report["relationships"] == 2
+
+    after = facts(kg, ["Shared"], SUPER)
+    assert f"{PREFIX}Shared uses {PREFIX}OnlyInOne" not in after                 # gone with its document
+    assert f"{PREFIX}Shared uses {PREFIX}AlsoInBoth" in after                    # still supported by document 2
+    assert f"{PREFIX}Shared uses {PREFIX}OnlyInTwo" in after
+    with kg.driver.session() as s:
+        left = s.run("MATCH (n:Entity {name:$n}) RETURN count(n) AS c", n=PREFIX + "OnlyInOne").single()["c"]
+        shared = s.run("MATCH (n:Entity {name:$n}) RETURN count(n) AS c", n=PREFIX + "Shared").single()["c"]
+        node = s.run("MATCH (d:Document {id:$i}) RETURN count(d) AS c", i=d1).single()["c"]
+    assert left == 0 and shared == 1 and node == 0                               # orphan removed, shared kept
+
+
+def test_deleting_a_document_twice_is_harmless(kg):
+    d = doc()
+    kg.save_triples([T("Q1", "USES", "Q2")], EVERYONE, d)
+    kg.delete_document(d)
+    again = kg.delete_document(d)
+    assert again == {"relationships": 0, "entities_removed": 0}

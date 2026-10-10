@@ -9,6 +9,7 @@ from encryptor import Encryptor
 from pipeline_config import PipelineConfig
 from access_policy import AccessPolicy, DocACL, User, get_default_policy
 from doc_identity import compute_doc_id
+from doc_registry import DocumentRegistry
 
 
 @dataclass
@@ -19,6 +20,16 @@ class RetrievalResult:
     dense_pool: list = field(default_factory=list)   # decrypted dense candidates, pre-rerank order
     graph_pool: list = field(default_factory=list)   # raw graph facts before reranking
     timings_ms: dict = field(default_factory=dict)
+
+    def sources(self):
+        """Which documents the final chunks came from, in rank order, one entry per document:
+        [{"doc_id", "chunk_index"}]. The UI turns these into citations (and later page / image links)."""
+        seen, out = set(), []
+        for r in self.chunks:
+            if r.get("doc_id") and r["doc_id"] not in seen:
+                seen.add(r["doc_id"])
+                out.append({"doc_id": r["doc_id"], "chunk_index": r.get("chunk_index")})
+        return out
 
     def to_context(self):
         """Prompt-ready context strings, wrapped in the XML tags the system prompt expects."""
@@ -37,10 +48,18 @@ class RAGPipeline:
             from reranker import ReRanker
             self.reranker = ReRanker()
         self.encryptor = encryptor or Encryptor()
+        self._registry = None
         self.kg_builder = None
         if self.config.use_graph:
             from kg_builder import KnowledgeGraphBuilder
             self.kg_builder = KnowledgeGraphBuilder()
+
+    @property
+    def registry(self) -> DocumentRegistry:
+        """Document-level metadata (filename, status, ...). Created on first use."""
+        if self._registry is None:
+            self._registry = DocumentRegistry(self.config.qdrant_path, self.encryptor, self.policy)
+        return self._registry
 
     # ---------- ingestion ----------
 
@@ -60,13 +79,25 @@ class RAGPipeline:
             return None
         return self.kg_builder.process_chunks(plaintext_chunks, acl, doc_id=doc_id)
 
-    def ingest_document(self, file_path, acl: DocACL):
+    def ingest_document(self, file_path, acl: DocACL, doc_id=None):
         """Idempotent: the same file with the same ACL always yields the same doc_id and point ids, so running
-        this twice (or retrying after a partial failure) leaves exactly one copy."""
-        doc_id = compute_doc_id(file_path, acl)
+        this twice (or retrying after a partial failure) leaves exactly one copy.
+        Returns {"doc_id", "chunks"}."""
+        doc_id = doc_id or compute_doc_id(file_path, acl)
         plaintext_chunks = self.ingest_vectors(file_path, acl, doc_id=doc_id)
         self.ingest_graph(plaintext_chunks, acl, doc_id=doc_id)
-        return doc_id
+        return {"doc_id": doc_id, "chunks": len(plaintext_chunks)}
+
+    def delete_document(self, doc_id) -> dict:
+        """Remove a document everywhere: chunks, graph facts, then its registry entry (last, so a half-finished
+        delete stays visible and can simply be retried). Idempotent."""
+        from embedder import delete_document_chunks
+        cfg = self.config
+        report = {"chunks_deleted": delete_document_chunks(doc_id, cfg.qdrant_path, cfg.collection)}
+        if self.kg_builder is not None:
+            report["graph"] = self.kg_builder.delete_document(doc_id)
+        self.registry.delete(doc_id)
+        return report
 
     # ---------- retrieval ----------
 
