@@ -1,0 +1,6 @@
+# Evaluation harness only (python -m evaluation.*, dataset preparation). Installed in the worker image, not the API image.
+-r requirements.txt
+ragas==0.4.3
+langchain-community==0.4.1
+langchain-openai==1.4.3
+datasets==5.0.1

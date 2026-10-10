@@ -1,42 +1,26 @@
-# ----- Core RAG -----
-sentence-transformers
-qdrant-client
-numpy
-
-# ----- FastAPI Backend -----
-fastapi
-uvicorn[standard]
-pydantic
-prometheus-fastapi-instrumentator
-
-# ----- Document Processing -----
-nltk
-python-docx
-pdfplumber
-chardet
-
-# ----- Streamlit Frontend -----
-streamlit
-streamlit-local-storage
-
-# ----- Async + HTTP -----
-requests
-aiohttp
-
-# ----- Misc -----
-python-multipart
-celery
-redis
-openai
-ollama
-rank_bm25
-cryptography
-pyyaml
-spacy
-neo4j
-
-# ----- Evaluation -----
-ragas
-langchain-community<0.4.2
-langchain-openai
-datasets
+# Runtime dependencies (API + Celery worker), pinned to the versions the stack was verified with.
+# Transitive dependencies are pinned in constraints.txt. Evaluation-only libraries: requirements-eval.txt.
+# Regenerate the pins: see the comment at the top of constraints.txt.
+sentence-transformers==6.1.0
+qdrant-client==1.19.1
+numpy==2.5.3
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+prometheus-fastapi-instrumentator==8.1.0
+nltk==3.10.3
+python-docx==1.2.0
+pdfplumber==0.11.10
+chardet==7.6.0
+requests==2.34.2
+aiohttp==3.14.3
+python-multipart==0.0.32
+celery==5.6.3
+redis==8.1.0
+openai==2.54.0
+ollama==0.6.2
+rank-bm25==0.2.2
+cryptography==50.0.1
+PyYAML==6.0.3
+spacy==3.8.16
+neo4j==6.3.1

@@ -1,14 +1,22 @@
 # Secrets come from .env (see .env.example). Infrastructure ports are bound to localhost only.
+# All image versions are pinned (the exact ones the stack was verified with). A healthcheck tells compose when a service is
+# really ready, and depends_on waits for it. Memory limits stop one service from starving the rest of the machine.
 services:
   redis:
-    image: redis:alpine
+    image: redis:8.10.1-alpine
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    mem_limit: 512m
 
   neo4j:
-    image: neo4j:latest
+    image: neo4j:2026.07.1
     ports:
       - "127.0.0.1:7474:7474"
       - "127.0.0.1:7687:7687"
@@ -16,6 +24,13 @@ services:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
     volumes:
       - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    mem_limit: 4g
 
   qdrant:
     image: qdrant/qdrant:v1.19.1
@@ -23,9 +38,17 @@ services:
       - "127.0.0.1:6333:6333"
     volumes:
       - qdrant_storage:/qdrant/storage
+    healthcheck:
+      # the qdrant image has no curl or wget; bash can open a TCP connection by itself
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    mem_limit: 2g
 
   vllm_engine:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.29.0
     ports:
       - "127.0.0.1:8001:8000"
     ipc: host
@@ -43,14 +66,20 @@ services:
     # VLLM_MODEL lets the evaluation swap in a different judge model (see evaluation/judge.py);
     # unset, it serves the Qwen generator exactly as before.
     command: >
-      --model ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}
+      --model ${VLLM_MODEL:-${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}}
       --quantization awq
       --gpu-memory-utilization 0.85 
       --max-model-len ${VLLM_MAX_LEN:-8192}
       --enforce-eager
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 20s
+      timeout: 8s
+      retries: 10
+      start_period: 240s     # loading the model takes a few minutes
 
   api:
-    build: 
+    build:
       context: ./backend
     ports:
       - "8000:8000"
@@ -61,7 +90,8 @@ services:
       - MINDSEARCH_JWT_SECRET=${MINDSEARCH_JWT_SECRET:?Set MINDSEARCH_JWT_SECRET in .env}
       - QDRANT_URL=http://qdrant:6333
       - RETRIEVAL_WORKERS=${RETRIEVAL_WORKERS:-4}
-      - PIPELINE_PRESET=${PIPELINE_PRESET:-full}
+      - PIPELINE_PRESET=${PIPELINE_PRESET:-full_hybrid}
+      - GENERATOR_MODEL=${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}   # the model vLLM serves (see vllm_engine); one setting for both
       - TOKENIZERS_PARALLELISM=false
       - MINDSEARCH_DATA_KEY=${MINDSEARCH_DATA_KEY:?Set MINDSEARCH_DATA_KEY in .env}
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -81,15 +111,28 @@ services:
         bind:
           create_host_path: false
       - ./backend/org_policy.yaml:/app/org_policy.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+      start_period: 90s     # loads the embedding and reranker models
+    mem_limit: 4g
     depends_on:
-      - redis
-      - neo4j
-      - qdrant
-      - vllm_engine
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      vllm_engine:
+        condition: service_healthy
 
   celery_worker:
-    build: 
+    build:
       context: ./backend
+      args:
+        WITH_EVAL: "1"      # the worker image also carries the evaluation libraries (RAGAS); the API image does not
     command: celery -A worker.celery_app worker --loglevel=info --pool=solo
     environment:
       - NEO4J_URI=neo4j://neo4j:7687
@@ -103,6 +146,7 @@ services:
       - OLLAMA_HOST=http://host.docker.internal:11434
       # Graph extraction backend: ollama (14B on CPU, best accuracy, slow) or vllm (GPU, fast). See kg_extractors.py
       - KG_EXTRACTOR=${KG_EXTRACTOR:-ollama}
+      - GENERATOR_MODEL=${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/org_policy.yaml:/app/org_policy.yaml:ro
@@ -111,10 +155,14 @@ services:
       - ./backend/evaluation:/app/evaluation
       - ./backend/eval_data:/app/eval_data
       - ./backend/qdrant_eval:/app/qdrant_eval
+    mem_limit: 6g          # the worker also runs the evaluation harness (embedder, reranker, RAGAS)
     depends_on:
-      - redis
-      - neo4j
-      - qdrant
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -125,23 +173,33 @@ services:
       - "8501:8501"
     environment:
       - API_BASE_URL=http://api:8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
+    mem_limit: 512m
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
+    mem_limit: 1g
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.1
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
+    mem_limit: 512m
     depends_on:
       - prometheus
 
