@@ -137,6 +137,7 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
             response.raise_for_status()
 
             full_response = ""
+            st.session_state.last_sources = []
             for line in response.iter_lines():
                 if line:
                     line = line.decode('utf-8')
@@ -152,6 +153,8 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
                                     full_response += content
                             elif 'error' in chunk:
                                 full_response += f"\nError: {chunk['error']}"
+                            elif 'sources' in chunk:
+                                st.session_state.last_sources = chunk['sources']
                         except json.JSONDecodeError:
                             pass
 
@@ -196,7 +199,8 @@ def process_user_message(message: str):
         st.session_state.messages.append({
             "role": "assistant",
             "content": response,
-            "elapsed_time": elapsed_time
+            "elapsed_time": elapsed_time,
+            "sources": st.session_state.pop("last_sources", [])
         })
 
     finally:
@@ -762,6 +766,37 @@ with st.sidebar:
     
     st.markdown("---")
 
+    # --- DOCUMENTS: what is in the knowledge base (only what this user may read), with status and delete ---
+    STATUS_ICON = {"queued": "⏳", "processing": "⚙️", "done": "✅", "failed": "❌"}
+    with st.expander("My documents", expanded=False):
+        st.button("Refresh", key="refresh_docs", use_container_width=True)
+        try:
+            dr = requests.get(f"{API_BASE_URL}/v1/documents", headers=auth_headers(), timeout=30)
+            if dr.status_code == 401:
+                sign_out("Your session expired. Please sign in again.")
+                st.rerun()
+            dr.raise_for_status()
+            documents = dr.json()["documents"]
+        except requests.exceptions.RequestException as e:
+            documents = []
+            st.error(f"Could not load documents: {e}")
+        if not documents:
+            st.caption("No documents yet.")
+        for doc in documents:
+            st.markdown(f"{STATUS_ICON.get(doc['status'], '•')} **{html.escape(doc['filename'])}**")
+            detail = f"{doc['status']} · {doc['level']}" + (f" · {', '.join(doc['groups'])}" if doc["groups"] else "")
+            if doc["status"] == "done":
+                detail += f" · {doc['chunks']} parts"
+            st.caption(detail + (f" · {doc['error']}" if doc.get("error") else ""))
+            if st.button("Delete", key=f"del_{doc['doc_id']}"):
+                rr = requests.delete(f"{API_BASE_URL}/v1/documents/{doc['doc_id']}", headers=auth_headers(), timeout=60)
+                if rr.status_code == 200:
+                    st.rerun()
+                else:
+                    st.error(rr.json().get("detail", "Delete failed."))
+
+    st.markdown("---")
+
     # Maintenance / Utility
     with st.expander("Settings"):
         if st.button("Clear Cache", use_container_width=True):
@@ -805,6 +840,10 @@ with chat_container:
             elapsed_time = message.get("elapsed_time")
             if elapsed_time:
                 st.markdown(f"<div class='timing'>Response time: {elapsed_time:.2f}s</div>", unsafe_allow_html=True)
+            if message.get("sources"):
+                st.caption("Sources: " + " · ".join(
+                    f"📄 {html.escape(src['filename'])} (part {src['chunk_index'] + 1})" if src.get("chunk_index") is not None
+                    else f"📄 {html.escape(src['filename'])}" for src in message["sources"]))
 
 # --- INPUT AREA ---
 st.markdown("---")
