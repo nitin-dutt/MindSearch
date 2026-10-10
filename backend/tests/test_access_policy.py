@@ -113,3 +113,29 @@ def test_neo4j_predicate_uses_the_same_parameters_as_the_user():
     params = AccessPolicy.neo4j_params(User("u1", 2, ("HR", "Legal")))
     assert params == {"u_rank": 2, "u_groups": ["HR", "Legal"], "u_id": "u1"}
     assert "rel.min_rank <= $u_rank" in AccessPolicy.neo4j_edge_predicate("rel")
+
+
+# ---- the same exhaustive check against a real Qdrant SERVER (runs when QDRANT_URL is set, e.g. in the worker container)
+
+@pytest.mark.skipif(not os.getenv("QDRANT_URL"), reason="needs a Qdrant server (set QDRANT_URL)")
+@pytest.mark.parametrize("policy_file", POLICY_FILES, ids=[os.path.basename(p) for p in POLICY_FILES])
+def test_qdrant_server_filter_matches_the_rule_for_every_user_and_document(policy_file):
+    import uuid
+    from qdrant_client.models import PayloadSchemaType
+
+    policy = AccessPolicy.from_yaml(policy_file)
+    acls = list(acl_grid(policy))
+    client = QdrantClient(url=os.environ["QDRANT_URL"])
+    name = f"test_{uuid.uuid4().hex[:10]}"
+    client.create_collection(name, vectors_config=VectorParams(size=2, distance=Distance.COSINE))
+    try:
+        client.create_payload_index(name, "min_rank", PayloadSchemaType.INTEGER)
+        client.create_payload_index(name, "groups", PayloadSchemaType.KEYWORD)
+        client.create_payload_index(name, "users", PayloadSchemaType.KEYWORD)
+        client.upsert(name, [PointStruct(id=i, vector=[1.0, 0.0], payload=acl.to_payload()) for i, acl in enumerate(acls)], wait=True)
+        for user in list(user_grid(policy)) + [User("explicit-guest", rank=0, groups=())]:
+            expected = {i for i, acl in enumerate(acls) if can_access(user, acl)}
+            hits, _ = client.scroll(name, scroll_filter=policy.qdrant_filter(user), limit=len(acls) + 5)
+            assert {h.id for h in hits} == expected, f"{policy.organization}: server filter disagrees with rule for {user}"
+    finally:
+        client.delete_collection(name)

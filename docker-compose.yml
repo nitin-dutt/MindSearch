@@ -17,6 +17,13 @@ services:
     volumes:
       - neo4j_data:/data
 
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
   vllm_engine:
     image: vllm/vllm-openai:latest
     ports:
@@ -52,13 +59,13 @@ services:
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
       - MINDSEARCH_JWT_SECRET=${MINDSEARCH_JWT_SECRET:?Set MINDSEARCH_JWT_SECRET in .env}
+      - QDRANT_URL=http://qdrant:6333
       - MINDSEARCH_DATA_KEY=${MINDSEARCH_DATA_KEY:?Set MINDSEARCH_DATA_KEY in .env}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - VLLM_API_BASE=http://vllm_engine:8000/v1
     volumes:
       - ./backend/uploads:/app/uploads
-      - qdrant_data:/app/qdrant_db
       - huggingface_cache:/root/.cache/huggingface
       - ./backend/logs:/app/logs
       # Users and the org policy are config, not code. create_host_path: false makes compose fail loudly
@@ -74,6 +81,7 @@ services:
     depends_on:
       - redis
       - neo4j
+      - qdrant
       - vllm_engine
 
   celery_worker:
@@ -85,14 +93,16 @@ services:
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
       - MINDSEARCH_DATA_KEY=${MINDSEARCH_DATA_KEY:?Set MINDSEARCH_DATA_KEY in .env}
+      - QDRANT_URL=http://qdrant:6333
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - VLLM_API_BASE=http://vllm_engine:8000/v1
       - OLLAMA_HOST=http://host.docker.internal:11434
+      # Graph extraction backend: ollama (14B on CPU, best accuracy, slow) or vllm (GPU, fast). See kg_extractors.py
+      - KG_EXTRACTOR=${KG_EXTRACTOR:-ollama}
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/org_policy.yaml:/app/org_policy.yaml:ro
-      - qdrant_data:/app/qdrant_db
       - huggingface_cache:/root/.cache/huggingface
       # Evaluation harness: results and datasets live on the host so they survive the container
       - ./backend/evaluation:/app/evaluation
@@ -101,6 +111,7 @@ services:
     depends_on:
       - redis
       - neo4j
+      - qdrant
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -135,6 +146,6 @@ volumes:
   redis_data:
   neo4j_data:
   huggingface_cache:
-  qdrant_data:
+  qdrant_storage:
   prometheus_data:
   grafana_data:

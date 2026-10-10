@@ -14,7 +14,8 @@ DEFAULT_GENERATOR_MODEL = "Qwen/Qwen2.5-7B-Instruct-AWQ"
 class PipelineConfig:
     name: str = "full"
     # storage
-    qdrant_path: str = "./qdrant_db"
+    # A Qdrant server URL when QDRANT_URL is set (the Docker stack), else an embedded folder
+    qdrant_path: str = os.getenv("QDRANT_URL") or "./qdrant_db"
     collection: str = "mindsearch_docs"
     # ingestion
     chunk_size: int = 150          # words

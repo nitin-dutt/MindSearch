@@ -1,5 +1,5 @@
 from sentence_transformers import SentenceTransformer
-from qdrant_client.models import VectorParams, Distance, PointStruct
+from qdrant_client.models import VectorParams, Distance, PointStruct, PayloadSchemaType
 import atexit
 import uuid
 
@@ -16,10 +16,16 @@ model = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
 _qdrant_clients = {}
 
 
+def is_server(location: str) -> bool:
+    return str(location).startswith(("http://", "https://"))
+
+
 def get_qdrant_client(path: str = "./qdrant_db"):
+    """`path` is either a folder (embedded Qdrant, used by tests and the evaluation harness) or the URL of a
+    Qdrant server (used by the application, so the API and the worker can share one database)."""
     if path not in _qdrant_clients:
         from qdrant_client import QdrantClient
-        _qdrant_clients[path] = QdrantClient(path=path)
+        _qdrant_clients[path] = QdrantClient(url=path, timeout=30) if is_server(path) else QdrantClient(path=path)
     return _qdrant_clients[path]
 
 
@@ -50,6 +56,11 @@ def build_embeddings(plaintext_chunks, encryptor, acl, db_path="./qdrant_db", co
             collection_name=collection_name,
             vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
         )
+        if is_server(db_path):
+            # Indexes on the fields the access filter uses (they have no effect in embedded mode)
+            client.create_payload_index(collection_name, "min_rank", PayloadSchemaType.INTEGER)
+            client.create_payload_index(collection_name, "groups", PayloadSchemaType.KEYWORD)
+            client.create_payload_index(collection_name, "users", PayloadSchemaType.KEYWORD)
 
     embeddings = model.encode(plaintext_chunks, convert_to_numpy=True)
 
