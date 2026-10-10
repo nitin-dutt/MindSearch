@@ -1,0 +1,8 @@
+# Matrix organization: people belong to several departments AND project teams at once.
+organization: Matrix org
+levels:
+  - {name: Contributor, rank: 1}
+  - {name: Lead,        rank: 2}
+  - {name: Director,    rank: 3}
+groups: [Platform, Mobile, Data, ProjectAtlas, ProjectBorealis, Legal]
+super_roles: [Admin, Auditor]

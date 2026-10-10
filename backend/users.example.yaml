@@ -1,0 +1,9 @@
+# Format of users.yaml (git-ignored). Do not write password_hash by hand: use
+#   python manage_users.py add <username> --level <Level> --groups <G1,G2> --roles <Role>
+# which prompts for the password and stores only a salted scrypt hash.
+users:
+  - username: alice
+    password_hash: scrypt$32768$8$1$<salt>$<hash>
+    level: Manager          # must exist in org_policy.yaml
+    groups: [HR]            # must exist in org_policy.yaml
+    roles: []               # a role listed under super_roles in org_policy.yaml grants full access

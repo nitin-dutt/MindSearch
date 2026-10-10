@@ -1,60 +1,55 @@
+"""AES-GCM micro-benchmark for the Encryptor used to protect chunks at rest.
+
+Run from backend/:  python benchmark_security.py
+Prints hardware info and p50/p95 latency per chunk size so README numbers are reproducible.
+"""
+import platform
+import statistics
 import time
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from encryptor import Encryptor
-from rag_pipeline import RAGPipeline
-import os
 
-def benchmark_security():
-    print("=== Secure RAG Benchmark ===")
-    
-    # 1. Micro-benchmark: Encryption Overhead
-    encryptor = Encryptor()
-    sample_text = "This is a sample sentence to test AES-256 encryption latency." * 10 # ~600 chars
-    
-    iterations = 1000
-    start = time.time()
-    for _ in range(iterations):
-        enc = encryptor.encrypt(sample_text)
-    enc_time = (time.time() - start) / iterations * 1000 # ms
-    
-    start = time.time()
-    for _ in range(iterations):
-        dec = encryptor.decrypt(enc)
-    dec_time = (time.time() - start) / iterations * 1000 # ms
-    
-    print(f"Encryption Latency: {enc_time:.4f} ms/chunk")
-    print(f"Decryption Latency: {dec_time:.4f} ms/chunk")
-    print(f"Throughput: {1000/enc_time:.2f} chunks/sec (Encrypt)")
+CHUNK_CHARS = [300, 600, 1200]
+WARMUP = 200
+ITERATIONS = 2000
 
-    # 2. Pipeline Integration Test
-    print("\nTesting Pipeline with Encryption...")
-    rag = RAGPipeline()
-    
-    # Ingest logic (mocking file read to isolate pipeline logic)
-    # We will just verify that self.chunks holds bytes
-    readme_path = os.path.abspath("../README.md")
-    if os.path.exists(readme_path):
-        rag.ingest_document(readme_path)
-        
-        # Check storage type
-        if rag.chunks and isinstance(rag.chunks[0], bytes):
-            print("✅ Verified: Chunks are stored as BYTES (Encrypted)")
-        else:
-            print("❌ Failed: Chunks are NOT bytes")
-            
-        # Check Retrieval (Decryption)
-        query = "What is MindSearch?"
-        start = time.time()
-        context = rag.retrieve_context(query)
-        retrieval_time = (time.time() - start) * 1000 # ms
-        
-        if context and isinstance(context[0], str):
-             print(f"✅ Verified: Retrieved context is STRING (Decrypted)")
-             print(f"Retrieval Latency (Search + ReRank + Decrypt): {retrieval_time:.2f} ms")
-        else:
-             print("❌ Failed: Retrieved context is not string")
 
-    else:
-        print("Skipping Pipeline test (README.md not found)")
+def _percentile(sorted_ms, pct):
+    return sorted_ms[min(len(sorted_ms) - 1, int(len(sorted_ms) * pct))]
+
+
+def _time_ms(fn):
+    start = time.perf_counter()
+    fn()
+    return (time.perf_counter() - start) * 1000
+
+
+def bench(chunk_chars):
+    enc = Encryptor(key=AESGCM.generate_key(bit_length=256))  # throwaway key, never touches encryption.key
+    text = ("This is a sample sentence to test AES-256 encryption latency. " * 40)[:chunk_chars]
+    blob = enc.encrypt(text)
+
+    for _ in range(WARMUP):
+        enc.decrypt(enc.encrypt(text))
+
+    enc_ms = sorted(_time_ms(lambda: enc.encrypt(text)) for _ in range(ITERATIONS))
+    dec_ms = sorted(_time_ms(lambda: enc.decrypt(blob)) for _ in range(ITERATIONS))
+    return enc_ms, dec_ms
+
+
+def main():
+    print("=== AES-GCM-256 chunk encryption benchmark ===")
+    print(f"Python {platform.python_version()} | {platform.processor() or platform.machine()} | {platform.system()} {platform.release()}")
+    print(f"{ITERATIONS} iterations after {WARMUP} warm-up\n")
+    print(f"{'chars':>6} | {'op':<7} | {'p50 ms':>8} | {'p95 ms':>8} | {'chunks/s (p50)':>14}")
+    for chars in CHUNK_CHARS:
+        enc_ms, dec_ms = bench(chars)
+        for name, vals in (("encrypt", enc_ms), ("decrypt", dec_ms)):
+            p50 = statistics.median(vals)
+            print(f"{chars:>6} | {name:<7} | {p50:>8.4f} | {_percentile(vals, 0.95):>8.4f} | {1000 / p50:>14,.0f}")
+
 
 if __name__ == "__main__":
-    benchmark_security()
+    main()

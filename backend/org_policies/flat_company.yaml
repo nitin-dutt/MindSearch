@@ -1,0 +1,6 @@
+# Small company: everyone is equal, access is decided purely by department.
+organization: Flat startup
+levels:
+  - {name: Member, rank: 0}
+groups: [Engineering, Sales, Finance, HR]
+super_roles: [Admin]

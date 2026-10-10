@@ -1,0 +1,8 @@
+# Typical enterprise: staff / manager / executive ladder AND department walls.
+organization: Departmental enterprise
+levels:
+  - {name: Staff,     rank: 1}
+  - {name: Manager,   rank: 2}
+  - {name: Executive, rank: 3}
+groups: [Engineering, HR, Legal, Finance]
+super_roles: [Admin]

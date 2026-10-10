@@ -1,0 +1,8 @@
+# The active access policy. Replace this file (or set ORG_POLICY_PATH) to match your organization.
+# Ready-made examples for other structures are in org_policies/.
+organization: MindSearch default
+levels:                 # ordered clearance ladder; a higher rank can read everything below it
+  - {name: Employee, rank: 1}
+  - {name: Manager,  rank: 2}
+groups: []              # no departments in the default setup
+super_roles: [Admin]    # bypass every check (should be audited)

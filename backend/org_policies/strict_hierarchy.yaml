@@ -1,0 +1,9 @@
+# Bank / government style: a strict clearance ladder, no departments.
+organization: Strict hierarchy
+levels:
+  - {name: Public,       rank: 0}
+  - {name: Internal,     rank: 1}
+  - {name: Confidential, rank: 2}
+  - {name: Secret,       rank: 3}
+groups: []
+super_roles: [SecurityOfficer]
