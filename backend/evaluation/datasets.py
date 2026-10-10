@@ -15,6 +15,9 @@ DATASETS = {
     "squad_dev": {"corpus": "squad_dev_corpus.md", "qa": "squad_dev_dataset.json",
                   "prepare": "prepare_large_dataset.py --name squad_dev --n 500 --skip 100",
                   "description": "SQuAD v1.1 DEV set: 400 questions disjoint from the frozen test set, for tuning"},
+    "squad_dev_xl": {"corpus": "squad_dev_xl_corpus.md", "qa": "squad_dev_xl_dataset.json",
+                     "prepare": "prepare_large_dataset.py --name squad_dev_xl --n 500 --skip 100 --pad-corpus 10000",
+                     "description": "The same 400 dev questions over a 10,000-passage corpus (many more distractors) for retrieval comparisons"},
     "hotpot": {"corpus": "hotpot_corpus.md", "qa": "hotpot_dataset.json", "prepare": "prepare_hotpot_dataset.py",
                "description": "HotpotQA distractor validation sample (multi-hop)"},
 }
