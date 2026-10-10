@@ -311,6 +311,7 @@ def main():
 
     from embedder import EMBEDDING_MODEL_NAME
     from llm import SYSTEM_PROMPT
+    from settings import get_settings
     from reranker import RERANKER_MODEL_NAME
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     run_id = f"{args.dataset}__{cfg.name}__{stamp}" + (f"__{args.tag}" if args.tag else "")
@@ -325,6 +326,7 @@ def main():
         "system_prompt_sha": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:12],
         "index": {**index_info, "n_chunks": n_chunks}, "graph": graph,
         "git": git_info(), "versions": library_versions(), "command": " ".join(sys.argv),
+        "settings": get_settings().describe(),     # every model name / URL / knob in effect (settings.py; contains no secrets)
     }
     with open(os.path.join(run_dir, "meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)

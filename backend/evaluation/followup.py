@@ -46,7 +46,7 @@ def followups_path(dataset):
 async def make(args):
     from llm import client
     _, items = load_dataset(args.dataset, args.n)
-    model = os.getenv("GENERATOR_MODEL", get_preset("dense_rerank").generator_model)
+    model = get_preset("dense_rerank").generator_model
     sem = asyncio.Semaphore(8)
     out = []
 

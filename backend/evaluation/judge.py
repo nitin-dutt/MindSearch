@@ -15,6 +15,7 @@ import json
 import os
 
 from evaluation import metrics as M
+from settings import get_settings
 
 RAGAS_METRICS = ["context_precision", "context_recall", "faithfulness", "answer_relevancy"]
 
@@ -22,7 +23,7 @@ RAGAS_METRICS = ["context_precision", "context_recall", "faithfulness", "answer_
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run-dir", required=True)
-    ap.add_argument("--judge-url", default=os.getenv("JUDGE_API_BASE", os.getenv("VLLM_API_BASE", "http://localhost:8001/v1")))
+    ap.add_argument("--judge-url", default=get_settings().judge_api_base)
     ap.add_argument("--judge-model", required=True)
     ap.add_argument("--workers", type=int, default=4, help="RAGAS parallelism; 4 avoided GPU timeouts on 8 GB")
     ap.add_argument("--limit", type=int)
@@ -56,7 +57,7 @@ def main():
     })
     judge_llm = ChatOpenAI(model=args.judge_model, openai_api_base=args.judge_url, openai_api_key="EMPTY",
                            max_tokens=1000, timeout=900, max_retries=5, temperature=0.0)
-    judge_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    judge_embeddings = HuggingFaceEmbeddings(model_name=get_settings().judge_embeddings_model)
 
     result = evaluate(dataset, metrics=[context_precision, context_recall, faithfulness, answer_relevancy],
                       llm=judge_llm, embeddings=judge_embeddings, run_config=RunConfig(max_workers=args.workers))
@@ -65,7 +66,7 @@ def main():
     generator = (meta.get("models") or {}).get("generator")
     scores = {"judge_model": args.judge_model, "generator_model": generator,
               "self_judged": generator == args.judge_model,
-              "judge_embeddings": "all-MiniLM-L6-v2", "n_scored": len(scorable), "n_excluded": excluded,
+              "judge_embeddings": get_settings().judge_embeddings_model, "n_scored": len(scorable), "n_excluded": excluded,
               "metrics": {}}
     per_question = [{"id": r["id"]} for r in scorable]
     for name in RAGAS_METRICS:

@@ -7,6 +7,7 @@ from collections import defaultdict
 from neo4j import GraphDatabase
 
 from access_policy import AccessPolicy, DocACL, User
+from settings import get_settings
 from kg_extractors import extract_chunks, make_extractor_from_env
 
 log = logging.getLogger("mindsearch.kg")
@@ -16,8 +17,9 @@ GRAPH_POOL_LIMIT = 50  # raw facts handed to the reranker, which keeps the best 
 
 class KnowledgeGraphBuilder:
     def __init__(self, uri=None, user=None, password=None, extractor=None):
-        neo4j_uri = uri or os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-        neo4j_user = user or os.environ.get("NEO4J_USER", "neo4j")
+        cfg = get_settings()
+        neo4j_uri = uri or cfg.neo4j_uri
+        neo4j_user = user or cfg.neo4j_user
         neo4j_pass = password or os.environ.get("NEO4J_PASSWORD")
         if not neo4j_pass:
             raise RuntimeError("NEO4J_PASSWORD is not set. Put it in .env (see .env.example).")
@@ -44,12 +46,13 @@ class KnowledgeGraphBuilder:
             with self._nlp_lock:               # concurrent first requests must not both load the model
                 if self._nlp is None:
                     import spacy
+                    name = get_settings().spacy_model
                     try:
-                        self._nlp = spacy.load("en_core_web_sm")
+                        self._nlp = spacy.load(name)
                     except OSError:
                         from spacy.cli import download
-                        download("en_core_web_sm")
-                        self._nlp = spacy.load("en_core_web_sm")
+                        download(name)
+                        self._nlp = spacy.load(name)
         return self._nlp
 
     def close(self):
@@ -61,7 +64,7 @@ class KnowledgeGraphBuilder:
     def process_chunks(self, chunks, acl: DocACL, doc_id=None, workers=None):
         """Extract triples chunk by chunk and write them to Neo4j. Returns ExtractionStats."""
         if workers is None:
-            workers = int(os.getenv("KG_EXTRACT_WORKERS", 8 if self.extractor.name.startswith("vllm") else 1))
+            workers = get_settings().kg_extract_workers or (8 if self.extractor.name.startswith("vllm") else 1)
         triples, stats = extract_chunks(self.extractor, chunks, workers=workers)
         log.info("KG extraction finished: %s", stats.to_dict())
         if triples:

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 import auth
 import conversation as conv
+from settings import get_settings
 from access_policy import PolicyError, User, can_access
 from audit import AuditLog, text_fingerprint
 from doc_identity import compute_doc_id
@@ -64,11 +65,12 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
         from llm import complete_chat
         cfg = getattr(rag, "config", None)
         rewriter = conv.QueryRewriter(getattr(cfg, "generator_model", ""), complete_chat,
-                                      enabled=cfg is not None and os.getenv("REWRITE_ENABLED", "1") == "1")
+                                      enabled=cfg is not None and get_settings().rewrite_enabled,
+                                      timeout=get_settings().rewrite_timeout_s)
     # Retrieval is CPU-heavy (embedding, cross-encoder, graph lookup). It runs in worker threads so the event
     # loop stays free for streaming and health checks, and the pool is capped so a burst of users cannot
     # oversubscribe the CPU (extra requests simply wait their turn).
-    workers = int(retrieval_workers or os.getenv("RETRIEVAL_WORKERS", "4"))
+    workers = int(retrieval_workers or get_settings().retrieval_workers)
     limiter_holder = []
 
     def retrieval_limiter():
@@ -281,8 +283,8 @@ def _set_torch_threads():
     """Several retrievals now run at once; give each a share of the CPU instead of every one grabbing all cores."""
     try:
         import torch
-        workers = int(os.getenv("RETRIEVAL_WORKERS", "4"))
-        torch.set_num_threads(int(os.getenv("TORCH_THREADS", max(1, (os.cpu_count() or 4) // workers))))
+        cfg = get_settings()
+        torch.set_num_threads(cfg.torch_threads or max(1, (os.cpu_count() or 4) // cfg.retrieval_workers))
     except ImportError:
         pass
 
@@ -290,11 +292,12 @@ def _set_torch_threads():
 def create_app_from_env() -> FastAPI:
     from prometheus_fastapi_instrumentator import Instrumentator
     from rag_pipeline import RAGPipeline
-    users = auth.UserStore.from_yaml(os.getenv("USERS_FILE", "users.yaml"))
+    cfg = get_settings()
+    users = auth.UserStore.from_yaml(cfg.users_file)
     _set_torch_threads()
     from pipeline_config import get_preset
     # PIPELINE_PRESET picks the retrieval strategy: full (default), dense_rerank_dynamic, dense_rerank_fast, ...
-    app = create_app(RAGPipeline(get_preset(os.getenv("PIPELINE_PRESET", "full"))), users, auth.load_secret(),
+    app = create_app(RAGPipeline(get_preset(cfg.pipeline_preset)), users, auth.load_secret(),
                      dispatch=_celery_dispatch)
     Instrumentator().instrument(app).expose(app)
     return app

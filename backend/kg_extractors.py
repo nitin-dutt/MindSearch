@@ -24,6 +24,8 @@ from typing import List
 
 from pydantic import BaseModel, ValidationError
 
+from settings import get_settings
+
 log = logging.getLogger("mindsearch.kg")
 
 PROMPT_VERSION = "v2"
@@ -86,10 +88,11 @@ def clean_triples(triples):
 class OllamaExtractor:
     def __init__(self, model=None, num_ctx=None, num_gpu=None):
         import ollama
-        self.model = model or os.getenv("KG_EXTRACT_MODEL", "qwen2.5:14b-instruct")
-        self.num_ctx = int(num_ctx or os.getenv("KG_EXTRACT_NUM_CTX", 4096))
-        self.num_gpu = int(num_gpu if num_gpu is not None else os.getenv("KG_EXTRACT_NUM_GPU", 0))
-        self.client = ollama.Client()  # honours OLLAMA_HOST
+        cfg = get_settings()
+        self.model = model or cfg.kg_extract_model
+        self.num_ctx = int(num_ctx or cfg.kg_extract_num_ctx)
+        self.num_gpu = int(num_gpu if num_gpu is not None else cfg.kg_extract_num_gpu)
+        self.client = ollama.Client(host=cfg.ollama_host or None)  # None = the library default
         self.name = f"ollama:{self.model}"
         self.truncated = 0
 
@@ -112,8 +115,9 @@ class OllamaExtractor:
 class VLLMExtractor:
     def __init__(self, model=None, base_url=None):
         from openai import OpenAI
-        self.model = model or os.getenv("KG_VLLM_MODEL") or os.getenv("GENERATOR_MODEL", "Qwen/Qwen2.5-7B-Instruct-AWQ")
-        self.client = OpenAI(api_key="EMPTY", base_url=base_url or os.getenv("VLLM_API_BASE", "http://localhost:8001/v1"))
+        cfg = get_settings()
+        self.model = model or cfg.effective_kg_vllm_model
+        self.client = OpenAI(api_key="EMPTY", base_url=base_url or cfg.vllm_api_base)
         self.name = f"vllm:{self.model}"
         self.truncated = 0
 
@@ -171,7 +175,7 @@ class CachedExtractor:
 
 
 def make_extractor_from_env():
-    kind = os.getenv("KG_EXTRACTOR", "ollama").lower()
+    kind = get_settings().kg_extractor
     if kind == "ollama":
         return OllamaExtractor()
     if kind == "vllm":

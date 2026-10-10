@@ -2,9 +2,11 @@ import asyncio
 from openai import AsyncOpenAI
 import os
 
+from settings import get_settings
+
 # Connect to the local vLLM instance
 # By default, we assume vLLM is running on port 8001
-VLLM_API_BASE = os.getenv("VLLM_API_BASE", "http://localhost:8001/v1")
+VLLM_API_BASE = get_settings().vllm_api_base
 VLLM_API_KEY = "EMPTY" # vLLM doesn't require an API key by default
 
 client = AsyncOpenAI(

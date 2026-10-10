@@ -6,9 +6,9 @@ log = logging.getLogger("mindsearch.security")
 
 
 def retrieve(query, db_path, user, policy, candidate_k=20, final_k=3, reranker=None, encryptor=None,
-             collection_name="mindsearch_docs", rerank_margin=None):
+             collection_name=None, rerank_margin=None, hybrid=False, hybrid_pool=50):
     """
-    Dense retrieval from Qdrant, optionally followed by cross-encoder re-ranking and a dynamic cutoff
+    Dense (or hybrid dense + keyword) retrieval from Qdrant, optionally followed by cross-encoder re-ranking and a dynamic cutoff
     (rerank_margin) that sends only the chunks that score close to the best one.
 
     Returns (results, pool):
@@ -21,7 +21,8 @@ def retrieve(query, db_path, user, policy, candidate_k=20, final_k=3, reranker=N
     injected into the context.
     """
     dense_scores, encrypted_payloads, aads, metas = search_embeddings(
-        query, user, policy, db_path=db_path, collection_name=collection_name, k=candidate_k
+        query, user, policy, db_path=db_path, collection_name=collection_name, k=candidate_k,
+        hybrid=hybrid, encryptor=encryptor, hybrid_pool=hybrid_pool,
     )
 
     if not encrypted_payloads:

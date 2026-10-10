@@ -4,12 +4,16 @@ from rag_pipeline import RAGPipeline
 import logging
 import os
 
+from settings import get_settings
+
+_cfg = get_settings()
+
 # Initialize Celery application
 # Connects to a local Redis instance by default
 celery_app = Celery(
     "mindsearch_worker",
-    broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
-    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+    broker=_cfg.celery_broker_url,
+    backend=_cfg.celery_result_backend
 )
 
 # Initialize the RAG Pipeline once per worker process
@@ -47,7 +51,7 @@ def process_document_task(self, file_path: str, acl_payload: dict, doc_id: str =
 
 
 def _remove_upload(path):
-    if os.getenv("KEEP_UPLOADS") == "1":
+    if get_settings().keep_uploads:
         return
     try:
         os.remove(path)

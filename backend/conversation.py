@@ -9,15 +9,17 @@ distracts it). The SERVER enforces them, never the client. History is untrusted 
 and it never influences access control (retrieval still runs with the caller's own permissions).
 """
 import asyncio
-import os
 import re
 from typing import List, Tuple
 
-MAX_HISTORY_MESSAGES = int(os.getenv("HISTORY_MAX_MESSAGES", "6"))        # 3 question/answer turns
-GENERATION_HISTORY_MESSAGES = int(os.getenv("HISTORY_GENERATION_MESSAGES", "4"))   # 2 turns for the answer writer
-HISTORY_TOKEN_BUDGET = int(os.getenv("HISTORY_TOKEN_BUDGET", "700"))
-PER_MESSAGE_CHARS = int(os.getenv("HISTORY_PER_MESSAGE_CHARS", "600"))
-REWRITE_TIMEOUT_S = float(os.getenv("REWRITE_TIMEOUT_S", "6"))
+from settings import get_settings
+
+_cfg = get_settings()
+MAX_HISTORY_MESSAGES = _cfg.history_max_messages                  # default 6 = 3 question/answer turns
+GENERATION_HISTORY_MESSAGES = _cfg.history_generation_messages    # default 4 = 2 turns for the answer writer
+HISTORY_TOKEN_BUDGET = _cfg.history_token_budget
+PER_MESSAGE_CHARS = _cfg.history_per_message_chars
+REWRITE_TIMEOUT_S = _cfg.rewrite_timeout_s
 MAX_QUESTION_CHARS = 8000
 MAX_REWRITE_CHARS = 400
 

@@ -6,8 +6,10 @@ allow-listed extension, checked for size and for a matching file signature.
 import os
 import uuid
 
+from settings import get_settings
+
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
+MAX_UPLOAD_BYTES = get_settings().max_upload_mb * 1024 * 1024
 
 # first bytes of real files of each binary type (a renamed .exe must not pass as a .pdf)
 _SIGNATURES = {".pdf": b"%PDF-", ".docx": b"PK\x03\x04"}

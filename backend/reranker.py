@@ -1,7 +1,9 @@
 from sentence_transformers import CrossEncoder
 import torch
 
-RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+from settings import get_settings
+
+RERANKER_MODEL_NAME = get_settings().reranker_model     # RERANKER_MODEL (settings.py)
 
 class ReRanker:
     def __init__(self, model_name=RERANKER_MODEL_NAME):

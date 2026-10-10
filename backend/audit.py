@@ -7,9 +7,11 @@ import hashlib
 import json
 import os
 import threading
+
+from settings import get_settings
 from datetime import datetime, timezone
 
-DEFAULT_PATH = os.getenv("AUDIT_LOG_PATH", "./logs/audit.jsonl")
+DEFAULT_PATH = get_settings().audit_log_path
 
 
 def text_fingerprint(text: str) -> dict:

@@ -21,11 +21,12 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import yaml
+
+from settings import get_settings
 from qdrant_client.models import (FieldCondition, Filter, IsEmptyCondition, MatchAny, MatchValue,
                                   PayloadField, Range)
 
-DEFAULT_POLICY_PATH = os.getenv(
-    "ORG_POLICY_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "org_policy.yaml"))
+DEFAULT_POLICY_PATH = get_settings().org_policy_path
 
 
 class PolicyError(ValueError):
