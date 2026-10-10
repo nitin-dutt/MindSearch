@@ -222,6 +222,20 @@ An earlier version of this README showed 0.9695 / 1.000 and a "vector-only basel
 
 Reproduce: `python -m evaluation.generate --dataset squad --config <dense_only|dense_rerank|full>` then `python -m evaluation.judge --run-dir <dir> --judge-model <model>`; raw files are in `backend/evaluation/results/`.
 
+### Follow-up questions (multi-turn chat)
+
+A follow-up like "what about its price?" means nothing to a search engine that cannot see the chat. The server rewrites it into a standalone question using the recent history ("What is the price of the Contoso acquisition?") and retrieves with that; the UI shows it as "Searched for: ...". Limits are enforced on the server: the rewriter sees at most the last 6 messages (3 turns) and the answer model the last 4 (2 turns), both capped at about 700 tokens, with old answers shortened to 600 characters (all configurable: `HISTORY_MAX_MESSAGES`, `HISTORY_GENERATION_MESSAGES`, `HISTORY_TOKEN_BUDGET`, `HISTORY_PER_MESSAGE_CHARS`). Client-supplied `system` messages are dropped, and history never affects access control.
+
+Measured on 332 synthetic follow-up chats from the SQuAD dev set (`python -m evaluation.followup`; retrieval metrics are exact, no LLM judge):
+
+| Query used for retrieval | Recall@3 | MRR |
+| :--- | :---: | :---: |
+| Original standalone question (upper bound) | 0.958 (0.937-0.979) | 0.938 |
+| **Raw follow-up, no rewriting** | **0.777** (0.732-0.819) | 0.720 |
+| Follow-up rewritten from history | **0.952** (0.928-0.973) | 0.931 |
+
+Rewriting raises recall@3 by +0.175 (95% CI +0.136 to +0.217) and is statistically indistinguishable from the original question (difference 0.006, CI -0.015 to +0.027). The rewrite costs about 250 ms (p50; p95 370 ms) once per follow-up and is skipped for a first question. Caveats: the same model writes the test follow-ups and performs the rewrite, and some generated follow-ups drift slightly in meaning, so treat this as a strong sanity check rather than a final benchmark. If the rewrite fails or times out, the original question is used.
+
 ### Concurrency and load
 
 Measured with `python -m loadtest.chat_load` (closed-loop simulated users, each sending 4 chat requests; SQuAD questions over an 87-chunk index; Qwen2.5-7B-AWQ on vLLM; RTX 5070 Laptop 8 GB, Ryzen 9 8940HX). Raw results are in `backend/loadtest/results/`. Each cell is **p95 time-to-first-token / throughput**.
@@ -436,6 +450,8 @@ DELETE /v1/documents/{doc_id}        # removes chunks, graph facts and the regis
 Authorization: Bearer <token>
 ```
 Each entry has `doc_id`, `filename`, `status` (`queued`, `processing`, `done` or `failed`), `chunks`, `level`, `groups`, `uploaded_at` and, for the uploader or an administrator, `uploaded_by`. Only the uploader or a super role can delete. Filenames and uploader names are stored encrypted. Deleting is idempotent and also removes graph entities no other document uses.
+
+**Conversation.** `messages` is the whole chat so far (newest last, up to 60). The server trims it and, for a follow-up, sends a first event `data: {"standalone_question": "..."}` showing what was actually searched for. A request whose last message is not from the user, or that is empty or oversized, gets HTTP 422.
 
 **Sources in chat.** The chat stream ends with one extra event before `[DONE]`, naming the documents the answer was based on:
 ```
