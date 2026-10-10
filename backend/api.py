@@ -11,8 +11,10 @@ Security model (alignment_plan SEC-01, SEC-04, SEC-09):
 import asyncio
 import json
 import os
+import time
 from typing import List, Optional
 
+import anyio
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -52,8 +54,19 @@ def _unauthorized(detail="Not authenticated"):
 
 
 def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads", dispatch=None,
-               audit: AuditLog = None, login_limiter: RateLimiter = None, token_ttl=3600) -> FastAPI:
+               audit: AuditLog = None, login_limiter: RateLimiter = None, token_ttl=3600,
+               retrieval_workers=None) -> FastAPI:
     policy = rag.policy
+    # Retrieval is CPU-heavy (embedding, cross-encoder, graph lookup). It runs in worker threads so the event
+    # loop stays free for streaming and health checks, and the pool is capped so a burst of users cannot
+    # oversubscribe the CPU (extra requests simply wait their turn).
+    workers = int(retrieval_workers or os.getenv("RETRIEVAL_WORKERS", "4"))
+    limiter_holder = []
+
+    def retrieval_limiter():
+        if not limiter_holder:                 # created lazily, inside the running event loop
+            limiter_holder.append(anyio.CapacityLimiter(workers))
+        return limiter_holder[0]
     for rec in users.records():          # fail at startup, not at the first login, if users.yaml is inconsistent
         policy.make_user(rec.username, rec.level, rec.groups, rec.roles)
     audit = audit or AuditLog()
@@ -75,6 +88,11 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
             audit.log("auth_unknown_subject", sub=str(claims.get("sub")))
             raise _unauthorized("Invalid or expired token")
         return policy.make_user(record.username, record.level, record.groups, record.roles)
+
+    @app.get("/healthz")
+    def healthz():
+        """Liveness probe. Deliberately trivial: under load it answers instantly only if the event loop is free."""
+        return {"status": "ok"}
 
     # ------------------------------------------------------------------ auth
 
@@ -111,7 +129,10 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
     @app.post("/v1/chat/completions")
     async def chat_endpoint(req: ChatRequest, user: User = Depends(current_user)):
         user_query = req.messages[-1].content
-        context = rag.retrieve_context(user_query, user)
+        t0 = time.perf_counter()
+        context = await anyio.to_thread.run_sync(rag.retrieve_context, user_query, user,
+                                                 limiter=retrieval_limiter())
+        retrieval_ms = (time.perf_counter() - t0) * 1000
         audit.log("chat", user=user.id, super_role=user.is_super, query=text_fingerprint(user_query),
                   context_items=len(context))
 
@@ -121,18 +142,19 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
             async def empty_stream():
                 yield f"data: {json.dumps({'choices': [{'delta': {'content': NO_CONTEXT_MESSAGE}}]})}\n\n"
                 yield "data: [DONE]\n\n"
-            return StreamingResponse(empty_stream(), media_type="text/event-stream")
+            return StreamingResponse(empty_stream(), media_type="text/event-stream",
+                                     headers={"X-Retrieval-Ms": f"{retrieval_ms:.0f}"})
 
         async def event_stream():
             try:
                 async for token in rag.stream_answer(user_query, context):
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
-                    await asyncio.sleep(0.01)
             except Exception as e:  # noqa: BLE001
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
             yield "data: [DONE]\n\n"
 
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+        return StreamingResponse(event_stream(), media_type="text/event-stream",
+                                 headers={"X-Retrieval-Ms": f"{retrieval_ms:.0f}"})
 
     # ---------------------------------------------------------------- ingest
 
@@ -185,10 +207,24 @@ def _celery_dispatch(path, acl_payload):
     return process_document_task.delay(path, acl_payload).id
 
 
+def _set_torch_threads():
+    """Several retrievals now run at once; give each a share of the CPU instead of every one grabbing all cores."""
+    try:
+        import torch
+        workers = int(os.getenv("RETRIEVAL_WORKERS", "4"))
+        torch.set_num_threads(int(os.getenv("TORCH_THREADS", max(1, (os.cpu_count() or 4) // workers))))
+    except ImportError:
+        pass
+
+
 def create_app_from_env() -> FastAPI:
     from prometheus_fastapi_instrumentator import Instrumentator
     from rag_pipeline import RAGPipeline
     users = auth.UserStore.from_yaml(os.getenv("USERS_FILE", "users.yaml"))
-    app = create_app(RAGPipeline(), users, auth.load_secret(), dispatch=_celery_dispatch)
+    _set_torch_threads()
+    from pipeline_config import get_preset
+    # PIPELINE_PRESET picks the retrieval strategy: full (default), dense_rerank_dynamic, dense_rerank_fast, ...
+    app = create_app(RAGPipeline(get_preset(os.getenv("PIPELINE_PRESET", "full"))), users, auth.load_secret(),
+                     dispatch=_celery_dispatch)
     Instrumentator().instrument(app).expose(app)
     return app

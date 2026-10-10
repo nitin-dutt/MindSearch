@@ -25,3 +25,4 @@ conftest.py
 .venv/
 venv/
 *.md
+loadtest/
