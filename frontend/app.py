@@ -103,8 +103,12 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
     """Send message to the RAG API and get response"""
     start_time = time.perf_counter()
 
+    # Send only the recent conversation (the server trims it again and is the authority). Failed attempts shown as
+    # assistant messages are not part of the real conversation, so they are left out.
     api_messages = []
-    for msg in st.session_state.messages:
+    for msg in st.session_state.messages[-12:]:
+        if msg["role"] == "assistant" and msg["content"].startswith(("Error:", "Your session expired")):
+            continue
         api_messages.append({
             "role": msg["role"],
             "content": msg["content"]
@@ -138,6 +142,7 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
 
             full_response = ""
             st.session_state.last_sources = []
+            st.session_state.last_standalone = None
             for line in response.iter_lines():
                 if line:
                     line = line.decode('utf-8')
@@ -155,6 +160,8 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
                                 full_response += f"\nError: {chunk['error']}"
                             elif 'sources' in chunk:
                                 st.session_state.last_sources = chunk['sources']
+                            elif 'standalone_question' in chunk:
+                                st.session_state.last_standalone = chunk['standalone_question']
                         except json.JSONDecodeError:
                             pass
 
@@ -200,7 +207,8 @@ def process_user_message(message: str):
             "role": "assistant",
             "content": response,
             "elapsed_time": elapsed_time,
-            "sources": st.session_state.pop("last_sources", [])
+            "sources": st.session_state.pop("last_sources", []),
+            "standalone": st.session_state.pop("last_standalone", None)
         })
 
     finally:
@@ -840,6 +848,8 @@ with chat_container:
             elapsed_time = message.get("elapsed_time")
             if elapsed_time:
                 st.markdown(f"<div class='timing'>Response time: {elapsed_time:.2f}s</div>", unsafe_allow_html=True)
+            if message.get("standalone"):
+                st.caption(f"🔎 Searched for: {html.escape(message['standalone'])}")
             if message.get("sources"):
                 st.caption("Sources: " + " · ".join(
                     f"📄 {html.escape(src['filename'])} (part {src['chunk_index'] + 1})" if src.get("chunk_index") is not None
