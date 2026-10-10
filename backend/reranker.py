@@ -1,12 +1,14 @@
 from sentence_transformers import CrossEncoder
 import torch
 
+RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
 class ReRanker:
-    def __init__(self, model_name="cross-encoder/ms-marco-MiniLM-L-6-v2"):
+    def __init__(self, model_name=RERANKER_MODEL_NAME):
         """
         Initialize the CrossEncoder model.
         """
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cpu"
         self.model = CrossEncoder(model_name, device=device)
 
     def rerank(self, query, chunks, top_k=5):

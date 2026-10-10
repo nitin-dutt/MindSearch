@@ -79,24 +79,45 @@ def extract_text_from_txt(file_path):
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 return f.read()
 
-def run_chunking(file_path, chunk_size=400):
-    """Chunk text from various file formats"""
+def run_chunking(file_path, chunk_size=150, overlap=20):
+    """Semantic chunking that preserves newlines and formatting"""
     text = extract_text_from_file(file_path)
     
     if not text:
         return []
     
-    sentences = sent_tokenize(text)
+    # Split by newlines to preserve semantic boundaries (paragraphs, bullet points)
+    paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
+    
     chunks = []
-    current = []
-
-    for sent in sentences:
-        current.append(sent)
-        if sum(len(s.split()) for s in current) >= chunk_size:
-            chunks.append(" ".join(current))
-            current = []
-
-    if current:
-        chunks.append(" ".join(current))
-
+    current_chunk = []
+    current_length = 0
+    
+    for para in paragraphs:
+        para_len = len(para.split())
+        
+        if current_length + para_len > chunk_size and current_chunk:
+            # Save the accumulated chunk, preserving newlines
+            chunks.append("\n".join(current_chunk))
+            
+            # Create the overlap by keeping the last few paragraphs
+            overlap_chunk = []
+            overlap_length = 0
+            
+            for prev_para in reversed(current_chunk):
+                if overlap_length + len(prev_para.split()) <= overlap:
+                    overlap_chunk.insert(0, prev_para)
+                    overlap_length += len(prev_para.split())
+                else:
+                    break
+                    
+            current_chunk = overlap_chunk
+            current_length = overlap_length
+            
+        current_chunk.append(para)
+        current_length += para_len
+        
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+        
     return chunks

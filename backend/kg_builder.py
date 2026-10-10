@@ -1,161 +1,153 @@
-import spacy
+import logging
+import os
+import uuid
+from collections import defaultdict
+
 from neo4j import GraphDatabase
-import ollama
-import json
-import re
+
+from access_policy import AccessPolicy, DocACL, User
+from kg_extractors import extract_chunks, make_extractor_from_env
+
+log = logging.getLogger("mindsearch.kg")
+
+GRAPH_POOL_LIMIT = 50  # raw facts handed to the reranker, which keeps the best few
+
 
 class KnowledgeGraphBuilder:
-    def __init__(self, uri="neo4j://127.0.0.1:7687", user="neo4j", password="24112003"):
-        """
-        Initializes the Neo4j connection and loads the SpaCy NLP model.
-        """
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
-        
-        # Ensure the English model is available
-        try:
-            self.nlp = spacy.load("en_core_web_sm")
-        except OSError:
-            print("Downloading spacy model 'en_core_web_sm'...")
-            from spacy.cli import download
-            download("en_core_web_sm")
-            self.nlp = spacy.load("en_core_web_sm")
+    def __init__(self, uri=None, user=None, password=None, extractor=None):
+        neo4j_uri = uri or os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
+        neo4j_user = user or os.environ.get("NEO4J_USER", "neo4j")
+        neo4j_pass = password or os.environ.get("NEO4J_PASSWORD")
+        if not neo4j_pass:
+            raise RuntimeError("NEO4J_PASSWORD is not set. Put it in .env (see .env.example).")
+        self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_pass))
+        self._extractor = extractor
+        self._nlp = None
+
+    # Heavy dependencies are created on first use so constructing the builder stays cheap
+    # (the API builds one at startup, and tests can inject a fake extractor).
+    @property
+    def extractor(self):
+        if self._extractor is None:
+            self._extractor = make_extractor_from_env()
+        return self._extractor
+
+    @extractor.setter
+    def extractor(self, value):
+        self._extractor = value
+
+    @property
+    def nlp(self):
+        if self._nlp is None:
+            import spacy
+            try:
+                self._nlp = spacy.load("en_core_web_sm")
+            except OSError:
+                from spacy.cli import download
+                download("en_core_web_sm")
+                self._nlp = spacy.load("en_core_web_sm")
+        return self._nlp
 
     def close(self):
         if self.driver is not None:
             self.driver.close()
 
-    def process_text(self, text: str):
-        """
-        Extracts entities and basic relations from text using an LLM (Ollama - llama3:8b)
-        and saves to Neo4j.
-        """
-        prompt = f"""
-        You are an expert Data Engineer building a Knowledge Graph.
-        Extract entities and their relationships from the text below.
-        
-        Analyze the text and return the relationships as a JSON list of dictionaries.
-        Each dictionary must have exactly three keys: 'subject', 'relation', 'object'.
-        - 'subject' and 'object' should be the concise string names of entities (like a Product, Company, Concept, Person).
-        - 'relation' should be a single uppercase word describing how they connect (e.g., USES, DEVELOPED_BY, ENHANCES).
-        
-        ONLY output valid JSON without markdown formatting. Do not output anything else.
-        Example output:
-        [
-          {{"subject": "FastAPI", "relation": "BUILT_WITH", "object": "Python"}},
-          {{"subject": "MindSearch", "relation": "USES", "object": "FAISS"}}
-        ]
-        
-        Text to analyze:
-        {text}
-        """
-        
-        try:
-            # We use the synchronous ollama client since this happens during chunk ingestion
-            response = ollama.generate(model="llama3:8b", prompt=prompt)
-            output = response.get("response", "")
-            
-            # Use regex to find the json array in case the LLM returned markdown backticks
-            match = re.search(r'\[.*\]', output, re.DOTALL)
-            if match:
-                json_str = match.group(0)
-                relations_data = json.loads(json_str)
-            else:
-                relations_data = json.loads(output)
-                
-            entities = set()
-            relations = []
-            
-            for item in relations_data:
-                sub = item.get("subject")
-                rel = item.get("relation")
-                obj = item.get("object")
-                
-                if sub and rel and obj:
-                    entities.add(sub)
-                    entities.add(obj)
-                    relations.append((sub, rel, obj))
-                    
-             # We no longer have spacy NER labels, so we'll assign "Entity" to all of them
-            entity_list = [(e, "Entity") for e in entities]
-            
-            # Save to Neo4j
-            self.save_to_neo4j(entity_list, relations)
-            return entity_list, relations
-            
-        except Exception as e:
-            print(f"Error during LLM extraction: {e}")
-            return [], []
+    # ------------------------------------------------------------ ingestion
 
-    def get_graph_context(self, query: str) -> list:
+    def process_chunks(self, chunks, acl: DocACL, doc_id=None, workers=None):
+        """Extract triples chunk by chunk and write them to Neo4j. Returns ExtractionStats."""
+        if workers is None:
+            workers = int(os.getenv("KG_EXTRACT_WORKERS", 8 if self.extractor.name.startswith("vllm") else 1))
+        triples, stats = extract_chunks(self.extractor, chunks, workers=workers)
+        log.info("KG extraction finished: %s", stats.to_dict())
+        if triples:
+            self.save_triples(triples, acl, doc_id or str(uuid.uuid4()))
+        return stats
+
+    def ensure_schema(self):
+        with self.driver.session() as session:
+            session.run("CREATE INDEX entity_name IF NOT EXISTS FOR (n:Entity) ON (n.name)")
+
+    def save_triples(self, triples, acl: DocACL, doc_id):
+        """Write triples in a few batched statements (one transaction), not one query per fact.
+
+        Every relationship carries its document's ACL (min_rank, groups, users) and doc_id. There is one
+        relationship per source document, so two documents with different permissions never merge into
+        one edge, and a fact is visible exactly when at least one of its source documents is.
         """
-        Extracts entities from the user query and retrieves 1-2 hop context from Neo4j.
-        """
+        self.ensure_schema()
+        names = sorted({t.subject for t in triples} | {t.object for t in triples})
+        by_relation = defaultdict(list)
+        for t in triples:
+            by_relation[t.relation].append({"s": t.subject, "o": t.object})
+        acl_props = acl.to_payload()
+
+        def write(tx):
+            tx.run("""
+                MERGE (d:Document {id: $doc_id})
+                SET d.min_rank = $min_rank, d.groups = $groups, d.users = $users
+                """, doc_id=doc_id, **acl_props)
+            tx.run("""
+                UNWIND $names AS name
+                MERGE (n:Entity {name: name})
+                WITH n
+                MATCH (d:Document {id: $doc_id})
+                MERGE (d)-[:CONTAINS]->(n)
+                """, names=names, doc_id=doc_id)
+            for rel_type, rows in by_relation.items():
+                # rel_type was normalized to [A-Z0-9_]+ by clean_triples, so it is safe to inline
+                tx.run(f"""
+                    UNWIND $rows AS row
+                    MATCH (s:Entity {{name: row.s}})
+                    MATCH (o:Entity {{name: row.o}})
+                    MERGE (s)-[r:{rel_type} {{doc_id: $doc_id}}]->(o)
+                    SET r.min_rank = $min_rank, r.groups = $groups, r.users = $users
+                    """, rows=rows, doc_id=doc_id, **acl_props)
+
+        with self.driver.session() as session:
+            session.execute_write(write)
+
+    # ------------------------------------------------------------ retrieval
+
+    def get_graph_context(self, query: str, user: User) -> list:
+        """Entities mentioned in the query -> facts within 1-2 hops, as readable sentences."""
         doc = self.nlp(query)
-        # Extract named entities and salient nouns/proper nouns
-        query_entities = set()
-        for ent in doc.ents:
-            query_entities.add(ent.text)
-            
-        for token in doc:
-            if token.pos_ in ["NOUN", "PROPN"]:
-                query_entities.add(token.text)
-                
+        query_entities = {ent.text for ent in doc.ents}
+        query_entities |= {tok.text for tok in doc if tok.pos_ in ("NOUN", "PROPN")}
         if not query_entities:
             return []
-            
-        context_triples = []
-        with self.driver.session() as session:
-            # Cypher query to find nodes matching extracted entities and their 1-2 hop relationships
-            cypher = """
+        return self.expand_entities(sorted(query_entities), user)
+
+    def expand_entities(self, entity_names, user: User, limit=GRAPH_POOL_LIMIT, start_limit=25) -> list:
+        """Facts reachable within 2 hops of the named entities, that `user` is allowed to see.
+
+        Every relationship on every path is returned as its own directed triple
+        (startNode -[type]-> endNode). Document nodes and CONTAINS edges are excluded so only
+        Entity-to-Entity facts come back. Access is checked on EVERY relationship of the path
+        (not just the starting node), using the predicate generated by AccessPolicy, so a restricted
+        fact cannot be reached by walking through permitted ones.
+        """
+        if user.is_super:
+            start_ok, path_ok = "true", "true"
+        else:
+            pred = AccessPolicy.neo4j_edge_predicate("rel")
+            # a start entity is only useful if the user may see at least one of its relationships
+            start_ok = f"EXISTS {{ MATCH (n)-[rel]-(:Entity) WHERE {pred} }}"
+            path_ok = f"ALL(rel IN relationships(p) WHERE {pred})"
+        cypher = f"""
             UNWIND $entities AS entity_name
-            MATCH (n)
-            WHERE toLower(n.name) CONTAINS toLower(entity_name)
-            MATCH (n)-[r*1..2]-(m)
-            WITH n, r, m
-            LIMIT 15
-            RETURN n.name AS source, type(r[0]) AS relation, m.name AS target
+            MATCH (n:Entity) WHERE toLower(n.name) CONTAINS toLower(entity_name) AND {start_ok}
+            WITH DISTINCT n LIMIT $start_limit
+            MATCH p = (n)-[*1..2]-(m:Entity)
+            WHERE ALL(x IN nodes(p) WHERE x:Entity) AND {path_ok}
+            UNWIND relationships(p) AS rel
+            WITH DISTINCT rel
+            RETURN startNode(rel).name AS source, type(rel) AS relation, endNode(rel).name AS target
+            LIMIT $limit
             """
-            
-            result = session.run(cypher, entities=list(query_entities))
-            
-            for record in result:
-                source = record["source"]
-                relation = record["relation"]
-                target = record["target"]
-                context_triples.append(f"{source} {relation.replace('_', ' ').lower()} {target}")
-                
-        # Deduplicate and format
-        unique_context = list(set(context_triples))
-        return unique_context
-
-    def save_to_neo4j(self, entities, relations):
-        """
-        Merges the extracted entities and relations into the Neo4j graph.
-        """
+        facts = []
         with self.driver.session() as session:
-            # 1. Create Entity Nodes from SpaCy NER
-            for ent_text, ent_label in entities:
-                # Clean up labels to be valid Neo4j types (no spaces or special chars)
-                label = "".join(e for e in ent_label if e.isalnum())
-                if not label: label = "Concept"
-                
-                # Merge on the base 'Entity' label, then add the specific label
-                query = f"""
-                MERGE (n:Entity {{name: $name}})
-                SET n:{label}
-                """
-                session.run(query, name=ent_text)
-
-            # 2. Create Relations (Subject-Verb-Object)
-            for sub, rel, obj in relations:
-                # Format relationship type to Neo4j standard (UPPERCASE_WITH_UNDERSCORES)
-                rel_type = "".join(e for e in rel.upper() if e.isalnum() or e == '_')
-                if not rel_type: rel_type = "RELATED_TO"
-                
-                # Merge on the base 'Entity' label to link the graph together
-                query = f"""
-                MERGE (s:Entity {{name: $sub}})
-                MERGE (o:Entity {{name: $obj}})
-                MERGE (s)-[:{rel_type}]->(o)
-                """
-                session.run(query, sub=sub, obj=obj)
+            for rec in session.run(cypher, entities=list(entity_names), limit=limit, start_limit=start_limit,
+                                   **AccessPolicy.neo4j_params(user)):
+                facts.append(f"{rec['source']} {rec['relation'].replace('_', ' ').lower()} {rec['target']}")
+        return list(dict.fromkeys(facts))  # de-duplicate, keep order

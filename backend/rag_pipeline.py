@@ -1,156 +1,98 @@
+import time
+from dataclasses import dataclass, field
+
 from chunker import run_chunking
 from embedder import build_embeddings
 from retriever import retrieve
 from llm import stream_generate
-from bm25_retriever import BM25Retriever
-from reranker import ReRanker
 from encryptor import Encryptor
-from kg_builder import KnowledgeGraphBuilder
+from pipeline_config import PipelineConfig
+from access_policy import AccessPolicy, DocACL, User, get_default_policy
+
+
+@dataclass
+class RetrievalResult:
+    """Everything one retrieval produced, so callers (API, evaluation) can inspect each stage."""
+    chunks: list = field(default_factory=list)       # [{"chunk", "score"}] final, best first
+    graph_facts: list = field(default_factory=list)  # [{"chunk", "score"}] final, best first
+    dense_pool: list = field(default_factory=list)   # decrypted dense candidates, pre-rerank order
+    graph_pool: list = field(default_factory=list)   # raw graph facts before reranking
+    timings_ms: dict = field(default_factory=dict)
+
+    def to_context(self):
+        """Prompt-ready context strings, wrapped in the XML tags the system prompt expects."""
+        return ([f"<doc>{r['chunk']}</doc>" for r in self.chunks]
+                + [f"<kg_fact>{r['chunk']}</kg_fact>" for r in self.graph_facts])
+
 
 class RAGPipeline:
+    def __init__(self, config: PipelineConfig = None, encryptor: Encryptor = None, policy: AccessPolicy = None):
+        self.config = config or PipelineConfig()
+        self.policy = policy or get_default_policy()
+        # Models/clients are only created for the stages the config uses, so a dense-only
+        # run needs neither Neo4j nor spaCy.
+        self.reranker = None
+        if self.config.use_reranker:
+            from reranker import ReRanker
+            self.reranker = ReRanker()
+        self.encryptor = encryptor or Encryptor()
+        self.kg_builder = None
+        if self.config.use_graph:
+            from kg_builder import KnowledgeGraphBuilder
+            self.kg_builder = KnowledgeGraphBuilder()
 
-    def __init__(self):
-        self.chunks = [] # Stores encrypted bytes
-        self.faiss_path = "./faiss.index"
-        self.bm25_path = "./bm25.index"
-        self.reranker = ReRanker()
-        self.encryptor = Encryptor() # Generates new key on each restart if not persisted!
-        self.kg_builder = KnowledgeGraphBuilder(uri="neo4j://127.0.0.1:7687", user="neo4j", password="24112003")
-        # In a real app, load key from env/file. For demo/research, generating new key is fine 
-        # as long as we don't expect persistence across restarts without reloading chunks.
+    # ---------- ingestion ----------
 
-    def ingest_document(self, file_path):
-        plaintext_chunks = run_chunking(file_path)
-        
-        # 1. Build Dense Index (FAISS needs plaintext or vectors derived from it)
-        build_embeddings(plaintext_chunks, self.faiss_path)
-        
-        # 2. Build Sparse Index (BM25 technically needs tokens, so we give it plaintext)
-        bm25 = BM25Retriever()
-        bm25.build_index(plaintext_chunks)
-        bm25.save_index(self.bm25_path)
-        
-        # 3. Build Knowledge Graph (Entities & Relations)
-        # We process the entire text or chunk by chunk
-        full_text = "\n".join(plaintext_chunks)
-        self.kg_builder.process_text(full_text)
-        
-        # 4. Encrypt Chunks for Storage
-        self.chunks = [self.encryptor.encrypt(chunk) for chunk in plaintext_chunks]
+    def ingest_vectors(self, file_path, acl: DocACL):
+        """Chunk -> embed -> encrypt (bound to record + ACL) -> index in Qdrant. Returns the plaintext chunks."""
+        cfg = self.config
+        plaintext_chunks = run_chunking(file_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap)
+        build_embeddings(plaintext_chunks, self.encryptor, acl, cfg.qdrant_path,
+                         collection_name=cfg.collection)
+        return plaintext_chunks
 
-    def retrieve_context(self, query):
-        # We need to pass the *encrypted* chunks to retrieve, but wait...
-        # The retriever currently returns the chunk content.
-        # If we pass encrypted chunks to retrieve, it will return encrypted chunks.
-        # We need to decrypt them before returning context.
-        
-        # Actually, BM25 retriever stores its own copy of chunks in the pickle file (plaintext currently).
-        # This is a security hole if we want "Secure RAG".
-        # But for Stage 3 scope (encrypt stored chunks), let's focus on what RAGPipeline holds.
-        
-        results, _, _ = retrieve(query, self.faiss_path, self.bm25_path, self.chunks, reranker=self.reranker, encryptor=self.encryptor)
-        
-        # Decrypt the results
-        decrypted_context = []
-        for r in results:
-            chunk_data = r["chunk"]
-            # If it came from FAISS, it's an index into self.chunks (which is encrypted).
-            # If it came from BM25, it might be the string from BM25 object if we aren't careful.
-            
-            # Helper in retriever.py returns:
-            # { "chunk": chunks[idx], "score": ... }
-            # So `r["chunk"]` IS the data from `self.chunks`.
-            
-            if isinstance(chunk_data, bytes):
-                decrypted_context.append(self.encryptor.decrypt(chunk_data))
+    def ingest_graph(self, plaintext_chunks, acl: DocACL):
+        """Extract entities/relations per chunk and write them to Neo4j.
+        Returns ExtractionStats (None when the graph is disabled)."""
+        if self.kg_builder is None:
+            return None
+        return self.kg_builder.process_chunks(plaintext_chunks, acl)
+
+    def ingest_document(self, file_path, acl: DocACL):
+        plaintext_chunks = self.ingest_vectors(file_path, acl)
+        self.ingest_graph(plaintext_chunks, acl)
+
+    # ---------- retrieval ----------
+
+    def retrieve(self, query, user: User) -> RetrievalResult:
+        cfg = self.config
+        result = RetrievalResult()
+
+        t0 = time.perf_counter()
+        result.chunks, result.dense_pool = retrieve(
+            query, cfg.qdrant_path, user, self.policy, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
+            reranker=self.reranker, encryptor=self.encryptor,
+            collection_name=cfg.collection, rerank_margin=cfg.rerank_margin,
+        )
+        result.timings_ms["dense_and_rerank"] = (time.perf_counter() - t0) * 1000
+
+        if self.kg_builder is not None:
+            t0 = time.perf_counter()
+            result.graph_pool = self.kg_builder.get_graph_context(query, user)
+            if self.reranker is not None:
+                result.graph_facts = self.reranker.rerank(query, result.graph_pool, top_k=cfg.graph_k)
             else:
-                 # Fallback if somehow we got plaintext (e.g. from BM25 object directly?)
-                 # In our current retriever.py, we pass `chunks` list and it picks from there.
-                 # So it should be bytes.
-                 decrypted_context.append(str(chunk_data))
-                 
-        # 3. Get Graph Context based on Query Entities
-        graph_context = self.kg_builder.get_graph_context(query)
-        
-        # 4. Merge Contexts
-        # Prepend graph context so it has high attention
-        final_context = graph_context + decrypted_context
-                 
-        return final_context
+                result.graph_facts = [{"chunk": f, "score": 0.0} for f in result.graph_pool[:cfg.graph_k]]
+            result.timings_ms["graph"] = (time.perf_counter() - t0) * 1000
+
+        return result
+
+    def retrieve_context(self, query, user: User):
+        return self.retrieve(query, user).to_context()
+
+    # ---------- generation ----------
 
     async def stream_answer(self, query, context):
         ctx = "\n\n".join(context)
-        async for token in stream_generate("llama3:8b", query, ctx):
+        async for token in stream_generate(self.config.generator_model, query, ctx):
             yield token
-
-
-
-
-
-
-
-
-
-
-
-
-# import asyncio
-# from typing import List
-# from chunker import run_chunking
-# from encryptor import encrypt_chunks
-# from embedder import build_embeddings, search_embeddings
-# from retriever import bm25_search
-# from kg_builder import expand_query
-# from llm import stream_generate
-
-# class RAGPipeline:
-
-#     def __init__(
-#         self,
-#         chunk_dir,
-#         encrypted_dir,
-#         faiss_path,
-#         bm25_dir,
-#         neo4j_uri,
-#         neo4j_user,
-#         neo4j_pass,
-#         llm
-#     ):
-#         self.chunk_dir = chunk_dir
-#         self.encrypted_dir = encrypted_dir
-#         self.faiss_path = faiss_path
-#         self.bm25_dir = bm25_dir
-#         self.llm_name = llm
-    
-#     # ========================
-#     # INGESTION PIPELINE
-#     # ========================
-#     def ingest_document(self, file_path: str):
-
-#         chunks = run_chunking(file_path)
-#         enc_paths = encrypt_chunks(chunks, self.encrypted_dir)
-#         build_embeddings(enc_paths, self.faiss_path)
-#         bm25_search.build_index(enc_paths, self.bm25_dir)
-#         expand_query.build_kg(enc_paths)
-
-#         return True
-
-#     # ========================
-#     # RETRIEVAL PIPELINE
-#     # ========================
-#     def retrieve_context(self, query: str) -> List[str]:
-#         bm25_hits = bm25_search(query, self.bm25_dir)
-#         dense_hits = search_embeddings(query, self.faiss_path)
-#         kg_hits = expand_query(query)
-
-#         # merge + rerank later
-#         merged = bm25_hits[:5] + dense_hits[:5] + kg_hits[:3]
-#         return merged
-
-#     # ========================
-#     # GENERATION PIPELINE
-#     # ========================
-#     async def stream_answer(self, query: str, context: List[str]):
-#         full_context = "\n\n".join(context)
-#         async for token in stream_generate(self.llm_name, query, full_context):
-#             yield token
