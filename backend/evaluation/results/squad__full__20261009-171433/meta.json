@@ -1,0 +1,63 @@
+{
+  "run_id": "squad__full__20261009-171433",
+  "created_utc": "20261009-171433",
+  "dataset": "squad",
+  "n_questions": 100,
+  "config": {
+    "name": "full",
+    "qdrant_path": "./qdrant_db",
+    "collection": "mindsearch_docs",
+    "chunk_size": 150,
+    "chunk_overlap": 20,
+    "use_reranker": true,
+    "use_graph": true,
+    "candidate_k": 20,
+    "final_k": 3,
+    "graph_k": 3,
+    "generator_model": "Qwen/Qwen2.5-7B-Instruct-AWQ"
+  },
+  "role": "Admin",
+  "generated": true,
+  "models": {
+    "embedder": "all-MiniLM-L6-v2",
+    "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "generator": "Qwen/Qwen2.5-7B-Instruct-AWQ"
+  },
+  "system_prompt_sha": "31dbdc3bace1",
+  "index": {
+    "path": "/app/qdrant_eval/squad",
+    "collection": "eval_squad",
+    "fingerprint": "d5f1da692d1cdd61",
+    "reused": true,
+    "n_chunks": 87
+  },
+  "graph": {
+    "entities": 992,
+    "relations": 840,
+    "build_seconds": 4351.3,
+    "extraction": {
+      "extractor": "ollama:qwen2.5:14b-instruct",
+      "chunks_total": 87,
+      "chunks_ok": 87,
+      "chunks_skipped_short": 0,
+      "chunks_failed": 0,
+      "cache_hits": 0,
+      "truncated_prompts": 0,
+      "triples_raw": 854,
+      "triples_kept": 840,
+      "seconds": 4338.8
+    }
+  },
+  "git": {
+    "sha": "unknown",
+    "dirty": null
+  },
+  "versions": {
+    "python": "3.12.14",
+    "sentence_transformers": "6.1.0",
+    "qdrant_client": null,
+    "ragas": "0.4.3",
+    "openai": "2.54.0"
+  },
+  "command": "/app/evaluation/generate.py --dataset squad --config full --reset-graph"
+}

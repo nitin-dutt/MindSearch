@@ -1,0 +1,47 @@
+{
+  "run_id": "squad__dense_rerank__20261009-152406",
+  "created_utc": "20261009-152406",
+  "dataset": "squad",
+  "n_questions": 100,
+  "config": {
+    "name": "dense_rerank",
+    "qdrant_path": "./qdrant_db",
+    "collection": "mindsearch_docs",
+    "chunk_size": 150,
+    "chunk_overlap": 20,
+    "use_reranker": true,
+    "use_graph": false,
+    "candidate_k": 20,
+    "final_k": 3,
+    "graph_k": 3,
+    "generator_model": "Qwen/Qwen2.5-7B-Instruct-AWQ"
+  },
+  "role": "Admin",
+  "generated": true,
+  "models": {
+    "embedder": "all-MiniLM-L6-v2",
+    "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "generator": "Qwen/Qwen2.5-7B-Instruct-AWQ"
+  },
+  "system_prompt_sha": "31dbdc3bace1",
+  "index": {
+    "path": "/app/qdrant_eval/squad",
+    "collection": "eval_squad",
+    "fingerprint": "d5f1da692d1cdd61",
+    "reused": true,
+    "n_chunks": 87
+  },
+  "graph": null,
+  "git": {
+    "sha": "unknown",
+    "dirty": null
+  },
+  "versions": {
+    "python": "3.12.14",
+    "sentence_transformers": "6.1.0",
+    "qdrant_client": null,
+    "ragas": "0.4.3",
+    "openai": "2.54.0"
+  },
+  "command": "/app/evaluation/generate.py --dataset squad --config dense_rerank"
+}

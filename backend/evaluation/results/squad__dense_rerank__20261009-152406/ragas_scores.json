@@ -1,0 +1,38 @@
+{
+  "judge_model": "hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4",
+  "generator_model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+  "self_judged": false,
+  "judge_embeddings": "all-MiniLM-L6-v2",
+  "n_scored": 100,
+  "n_excluded": 0,
+  "metrics": {
+    "context_precision": {
+      "mean": 0.9646464645659091,
+      "ci_low": 0.9377104376319866,
+      "ci_high": 0.9865319864484849,
+      "n": 99,
+      "n_nan": 1
+    },
+    "context_recall": {
+      "mean": 0.8788112596623235,
+      "ci_low": 0.8271023302938197,
+      "ci_high": 0.927936248149014,
+      "n": 94,
+      "n_nan": 6
+    },
+    "faithfulness": {
+      "mean": 0.7941190476190476,
+      "ci_low": 0.7426666666666667,
+      "ci_high": 0.8434999999999999,
+      "n": 100,
+      "n_nan": 0
+    },
+    "answer_relevancy": {
+      "mean": 0.7764906616182442,
+      "ci_low": 0.7365579215882768,
+      "ci_high": 0.8153836068800053,
+      "n": 100,
+      "n_nan": 0
+    }
+  }
+}

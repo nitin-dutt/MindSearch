@@ -1,0 +1,183 @@
+{
+  "n_questions": 100,
+  "retrieval": {
+    "final_hit@1": {
+      "mean": 0.94,
+      "ci_low": 0.89,
+      "ci_high": 0.98,
+      "n": 100
+    },
+    "final_hit@3": {
+      "mean": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "final_mrr": {
+      "mean": 0.9666666666666667,
+      "ci_low": 0.94,
+      "ci_high": 0.99,
+      "n": 100
+    },
+    "final_ndcg@1": {
+      "mean": 0.94,
+      "ci_low": 0.89,
+      "ci_high": 0.98,
+      "n": 100
+    },
+    "final_ndcg@3": {
+      "mean": 0.9752371901428583,
+      "ci_low": 0.9552371901428584,
+      "ci_high": 0.9926185950714291,
+      "n": 100
+    },
+    "final_recall@1": {
+      "mean": 0.94,
+      "ci_low": 0.89,
+      "ci_high": 0.98,
+      "n": 100
+    },
+    "final_recall@3": {
+      "mean": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "pool_hit@1": {
+      "mean": 0.83,
+      "ci_low": 0.75,
+      "ci_high": 0.9,
+      "n": 100
+    },
+    "pool_hit@10": {
+      "mean": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "pool_hit@20": {
+      "mean": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "pool_hit@3": {
+      "mean": 0.97,
+      "ci_low": 0.93,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "pool_hit@5": {
+      "mean": 0.98,
+      "ci_low": 0.95,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "pool_mrr": {
+      "mean": 0.9049166666666666,
+      "ci_low": 0.8608333333333333,
+      "ci_high": 0.9440000000000001,
+      "n": 100
+    },
+    "pool_ndcg@1": {
+      "mean": 0.83,
+      "ci_low": 0.75,
+      "ci_high": 0.9,
+      "n": 100
+    },
+    "pool_ndcg@10": {
+      "mean": 0.928915414211287,
+      "ci_low": 0.8955212664246582,
+      "ci_high": 0.9582114364304074,
+      "n": 100
+    },
+    "pool_ndcg@20": {
+      "mean": 0.928915414211287,
+      "ci_low": 0.8955212664246582,
+      "ci_high": 0.9582114364304074,
+      "n": 100
+    },
+    "pool_ndcg@3": {
+      "mean": 0.9183301655000041,
+      "ci_low": 0.8751138433214352,
+      "ci_high": 0.9530929753571458,
+      "n": 100
+    },
+    "pool_ndcg@5": {
+      "mean": 0.9221986935723494,
+      "ci_low": 0.882495248250006,
+      "ci_high": 0.9567836778214311,
+      "n": 100
+    },
+    "pool_recall@1": {
+      "mean": 0.83,
+      "ci_low": 0.75,
+      "ci_high": 0.9,
+      "n": 100
+    },
+    "pool_recall@10": {
+      "mean": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "pool_recall@20": {
+      "mean": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "pool_recall@3": {
+      "mean": 0.97,
+      "ci_low": 0.93,
+      "ci_high": 1.0,
+      "n": 100
+    },
+    "pool_recall@5": {
+      "mean": 0.98,
+      "ci_low": 0.95,
+      "ci_high": 1.0,
+      "n": 100
+    }
+  },
+  "graph": {
+    "questions_with_graph_facts": 0.94,
+    "questions_with_raw_graph_pool": 0.94
+  },
+  "latency_ms": {
+    "retrieval_p50": 325.3,
+    "retrieval_p95": 539.05
+  },
+  "generation": {
+    "n_failed": 0,
+    "n_no_context": 0,
+    "answers": {
+      "ans_exact_match": {
+        "mean": 0.0,
+        "ci_low": 0.0,
+        "ci_high": 0.0,
+        "n": 100
+      },
+      "ans_contains_gold": {
+        "mean": 0.87,
+        "ci_low": 0.8,
+        "ci_high": 0.93,
+        "n": 100
+      },
+      "ans_token_f1": {
+        "mean": 0.26774520235634874,
+        "ci_low": 0.2311715753342991,
+        "ci_high": 0.3030233497369552,
+        "n": 100
+      },
+      "ans_token_recall": {
+        "mean": 0.8816666666666667,
+        "ci_low": 0.8216666666666668,
+        "ci_high": 0.9375,
+        "n": 100
+      }
+    },
+    "ttft_ms_p50": 261.2,
+    "gen_ms_p50": 1169.0
+  }
+}

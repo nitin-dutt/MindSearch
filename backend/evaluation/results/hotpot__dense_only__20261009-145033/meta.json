@@ -1,0 +1,47 @@
+{
+  "run_id": "hotpot__dense_only__20261009-145033",
+  "created_utc": "20261009-145033",
+  "dataset": "hotpot",
+  "n_questions": 200,
+  "config": {
+    "name": "dense_only",
+    "qdrant_path": "./qdrant_db",
+    "collection": "mindsearch_docs",
+    "chunk_size": 150,
+    "chunk_overlap": 20,
+    "use_reranker": false,
+    "use_graph": false,
+    "candidate_k": 20,
+    "final_k": 3,
+    "graph_k": 3,
+    "generator_model": "Qwen/Qwen2.5-7B-Instruct-AWQ"
+  },
+  "role": "Admin",
+  "generated": false,
+  "models": {
+    "embedder": "all-MiniLM-L6-v2",
+    "reranker": null,
+    "generator": null
+  },
+  "system_prompt_sha": "31dbdc3bace1",
+  "index": {
+    "path": "C:\\.ME\\Projects\\MindSearch\\backend\\qdrant_eval\\hotpot",
+    "collection": "eval_hotpot",
+    "fingerprint": "cfa4c9d514cb12b6",
+    "reused": false,
+    "n_chunks": 1530
+  },
+  "graph": null,
+  "git": {
+    "sha": "364d025b81c3e48878ca689eccc01cd47390a635",
+    "dirty": true
+  },
+  "versions": {
+    "python": "3.11.7",
+    "sentence_transformers": "6.1.0",
+    "qdrant_client": null,
+    "ragas": null,
+    "openai": "3.27.0"
+  },
+  "command": "C:\\.ME\\Projects\\MindSearch\\backend\\evaluation\\generate.py --dataset hotpot --config dense_only --no-generate"
+}

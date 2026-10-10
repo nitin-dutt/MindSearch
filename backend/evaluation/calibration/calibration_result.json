@@ -1,0 +1,20 @@
+{
+  "faithfulness_vs_human_supported": {
+    "n": 30,
+    "agreement": 0.5,
+    "judge_ok_human_ok": 13,
+    "judge_bad_human_bad": 2,
+    "judge_ok_human_bad": 0,
+    "judge_bad_human_ok": 15
+  },
+  "contains_gold_vs_human_correct": {
+    "n": 30,
+    "agreement": 0.9,
+    "judge_ok_human_ok": 25,
+    "judge_bad_human_bad": 2,
+    "judge_ok_human_bad": 0,
+    "judge_bad_human_ok": 3
+  },
+  "human_correct_rate": 0.9333333333333333,
+  "human_supported_rate": 0.9333333333333333
+}
