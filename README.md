@@ -222,6 +222,25 @@ An earlier version of this README showed 0.9695 / 1.000 and a "vector-only basel
 
 Reproduce: `python -m evaluation.generate --dataset squad --config <dense_only|dense_rerank|full>` then `python -m evaluation.judge --run-dir <dir> --judge-model <model>`; raw files are in `backend/evaluation/results/`.
 
+### Concurrency and load
+
+Measured with `python -m loadtest.chat_load` (closed-loop simulated users, each sending 4 chat requests; SQuAD questions over an 87-chunk index; Qwen2.5-7B-AWQ on vLLM; RTX 5070 Laptop 8 GB, Ryzen 9 8940HX). Raw results are in `backend/loadtest/results/`. Each cell is **p95 time-to-first-token / throughput**.
+
+| Users | Before: retrieval blocked the event loop | Retrieval in a capped thread pool (INF-02) | Thread pool + "fast" preset (10 candidates, dynamic context, no graph) |
+| :--- | :---: | :---: | :---: |
+| 1 | 963 ms / 0.99 req/s | 663 ms / 1.18 req/s | **322 ms / 1.62 req/s** |
+| 5 | 3,432 ms / 1.65 req/s | 2,523 ms / 2.02 req/s | **893 ms / 4.62 req/s** |
+| 10 | 7,084 ms / 1.38 req/s | 4,098 ms / 2.01 req/s | **1,729 ms / 6.24 req/s** |
+| 20 | 35,249 ms / 1.15 req/s | 8,195 ms / 2.25 req/s | **3,006 ms / 5.39 req/s** |
+
+A trivial `/healthz` endpoint is probed every 100 ms during each run. Its slowest answer shows whether the server is frozen: **549 / 1,103 / 4,537 / 6,710 ms** before (at 1 / 5 / 10 / 20 users) versus **4 / 19 / 43 / 47 ms** with the thread pool.
+
+What this does and does not show:
+- **Before the fix, throughput fell as users were added** (1.65 to 1.15 req/s) because every retrieval froze the server's event loop. Retrieval now runs in worker threads (`RETRIEVAL_WORKERS`, default 4), and the artificial 10 ms sleep per streamed token was removed.
+- **Median time-to-first-token is not always better with the thread pool alone** (for example 6.6 s vs 2.4 s at 20 users): the old server was unfair, letting some requests through quickly while others stalled for tens of seconds. Requests now wait in line. The tail (p95) is much better in every row.
+- **The remaining limit is CPU, not threads.** One retrieval already uses all cores, so more workers add little throughput; making each retrieval cheaper (the "fast" preset) is what raises it. That preset skips the knowledge graph, which showed no benefit on single-hop SQuAD. Select a preset with `PIPELINE_PRESET` (default `full`).
+- **Ingestion is idempotent:** uploading the same document twice, or a task retry after a partial failure, overwrites instead of duplicating (deterministic document and chunk ids).
+
 ### Security & Encryption Latency
 
 Produced by `python backend/benchmark_security.py` (2000 iterations after warm-up, single thread, AES-GCM-256):
