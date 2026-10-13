@@ -2,6 +2,9 @@
 eval_data/hotpot_corpus.md + eval_data/hotpot_dataset.json.
 
 Run from anywhere:  python backend/prepare_hotpot_dataset.py [--n 200]
+A second, untouched set for confirming results after tuning on the first:
+                    python backend/prepare_hotpot_dataset.py --name hotpot_b --skip 200 --n 100
+(the questions are a fixed shuffle; --skip drops the first N, so hotpot_b never overlaps hotpot)
 
 Every HotpotQA question comes with 10 paragraphs: 2 gold supporting paragraphs (the hops) and 8
 distractors. The corpus is the union of those paragraphs for the sampled questions, so a question's
@@ -52,12 +55,14 @@ def passage_line(title, sentences):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=200, help="number of questions to sample")
+    ap.add_argument("--skip", type=int, default=0, help="skip the first N shuffled questions (used by the held-out set)")
+    ap.add_argument("--name", default="hotpot", help="output file prefix")
     args = ap.parse_args()
 
     rows = list(load_rows())
     print(f"Loaded {len(rows)} HotpotQA validation questions.")
     random.Random(SEED).shuffle(rows)
-    rows = rows[:args.n]
+    rows = rows[args.skip:args.skip + args.n]
 
     items, corpus, seen = [], [], set()
     for r in rows:
@@ -75,11 +80,11 @@ def main():
         })
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    with open(os.path.join(OUT_DIR, "hotpot_corpus.md"), "w", encoding="utf-8", newline="\n") as f:
+    with open(os.path.join(OUT_DIR, f"{args.name}_corpus.md"), "w", encoding="utf-8", newline="\n") as f:
         f.write("# HotpotQA Distractor Validation Corpus\n\n")
         for line in corpus:
             f.write(f"{line}\n\n")
-    with open(os.path.join(OUT_DIR, "hotpot_dataset.json"), "w", encoding="utf-8", newline="\n") as f:
+    with open(os.path.join(OUT_DIR, f"{args.name}_dataset.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(items, f, indent=2, ensure_ascii=False)
 
     n_words = sum(len(c.split()) for c in corpus)
