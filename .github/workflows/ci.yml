@@ -4,7 +4,7 @@ name: CI
 #   lint          ruff: syntax errors and unused/undefined names
 #   test          the full pytest suite against real Neo4j and Qdrant service containers, with a coverage report
 #   docker-build  both images build, and the API image can import its libraries
-#   audit         pip-audit over the pinned dependency lock (informational: it never fails the build)
+#   audit         pip-audit over the pinned dependency lock; fails on any NEW advisory (known unfixable ones are listed below)
 
 on:
   push:
@@ -25,7 +25,7 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
       - run: ruff check .
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       # Real databases, so the access-control tests run against Neo4j and Qdrant instead of being skipped.
@@ -90,7 +90,7 @@ jobs:
           if-no-files-found: ignore
 
   docker-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -105,9 +105,8 @@ jobs:
         run: docker run --rm mindsearch-api:ci python -c "import fastapi, qdrant_client, sentence_transformers, spacy, neo4j, celery; print('imports ok')"
 
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
-    continue-on-error: true      # informational: some advisories have no fixed release yet
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -115,4 +114,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit
       - name: Audit the pinned dependency lock
-        run: pip-audit -r backend/constraints.txt --no-deps --disable-pip
+        # Ignored on purpose: advisories that have NO fixed release yet (checked 2026-10-13). Re-check when upgrading these packages.
+        #   PYSEC-2026-2447 diskcache, PYSEC-2026-3740 nltk, PYSEC-2026-3046 ragas
+        run: >-
+          pip-audit -r backend/constraints.txt --no-deps --disable-pip
+          --ignore-vuln PYSEC-2026-2447 --ignore-vuln PYSEC-2026-3740 --ignore-vuln PYSEC-2026-3046
