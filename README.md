@@ -11,7 +11,7 @@
 
 **MindSearch** is an enterprise-grade, 100% offline **GraphRAG (Knowledge Graph + Dense Vector RAG)** platform. Designed for air-gapped, privacy-sensitive environments (finance, legal, defense, healthcare), it removes cloud API dependencies and recurring token costs, and keeps documents on your own hardware.
 
-By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, **MS-MARCO Cross-Encoder re-ranking**, and local **vLLM-served quantized LLMs**, MindSearch resolves complex multi-hop queries that standard vector-only RAG systems fail to answer—with chunk text stored under **AES-GCM 256-bit encryption** and retrieval filtered by an **organization-configurable access policy** (clearance levels + departments) enforced on both the vector and graph queries. See [Security Model and Limits](#security-model-and-limits) for exactly what is and is not protected.
+By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, **MS-MARCO Cross-Encoder re-ranking**, and local **vLLM-served quantized LLMs**, MindSearch finds the second supporting passage that multi-hop questions need (measured on held-out HotpotQA questions: both needed passages reach the model 87% of the time versus 73% for a dense-only pipeline, see [Multi-hop retrieval](#multi-hop-retrieval-the-graphs-job))—with chunk text stored under **AES-GCM 256-bit encryption** and retrieval filtered by an **organization-configurable access policy** (clearance levels + departments) enforced on both the vector and graph queries. See [Security Model and Limits](#security-model-and-limits) for exactly what is and is not protected.
 
 ---
 
@@ -38,10 +38,10 @@ By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, 
 
 ## Core Objectives
 
-1. **Eliminate Vector Search Blind Spots (Multi-Hop GraphRAG):** Standard vector search struggles when information is scattered across non-contiguous paragraphs. MindSearch traverses 1–2 hop entity relationships in Neo4j to assemble holistic context.
+1. **Eliminate Vector Search Blind Spots (Multi-Hop GraphRAG):** Standard vector search struggles when information is scattered across non-contiguous paragraphs. MindSearch links every entity to the passages that mention it in Neo4j, follows those links from the entities in the question and in the best passages, and ranks the candidates with a small trained ranker (see Multi-hop retrieval below for the measured result and its limits).
 2. **Document-Level Security (encryption at rest + policy-driven access control):** Unauthorized text never reaches the LLM prompt, because it is filtered out at the database query level before the prompt is built. Chunk text is AES-GCM-256 encrypted and each ciphertext is bound to its record and access rule; identity comes from signed login tokens.
 3. **High-Throughput Offline Inference:** Maximize local GPU hardware utilization via **vLLM** (PagedAttention, Continuous Batching, and AWQ 4-bit quantization) with dual-engine offloading (CPU Ollama for extraction, GPU vLLM for chat).
-4. **Asynchronous Non-Blocking Scalability:** Decouple document parsing, OCR, embedding, and graph generation into background task queues using **Celery & Redis**.
+4. **Asynchronous Non-Blocking Scalability:** Decouple document parsing, embedding, and graph generation into background task queues using **Celery & Redis**.
 5. **Continuous Empirical Validation:** Rigorously validate context precision, recall, and faithfulness using an automated offline **RAGAS LLM-as-a-Judge** pipeline.
 
 ---
@@ -85,39 +85,38 @@ By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, 
 
 ```
 MindSearch/
-├── docker-compose.yml              # Stack: API, vLLM, Neo4j, Redis, Celery worker, UI, Prometheus, Grafana
-├── docker-compose.eval.yml         # Overlay: run evaluation against the current source without rebuilding
+├── docker-compose.yml              # Stack: API, vLLM, Neo4j, Redis, Qdrant, Celery worker, UI, Prometheus, Grafana (pinned, health-checked)
+├── docker-compose.eval.yml         # Overlay: run against the current source without rebuilding
 ├── .env.example                    # Secrets template (copy to .env, which is git-ignored)
-├── README.md
+├── .github/                        # CI workflow (lint, tests, Docker build, audit) and Dependabot config
+├── ruff.toml, LICENSE, README.md
 ├── prometheus/prometheus.yml       # Prometheus scrape configuration
 ├── samples/                        # Example documents
-├── docs/archive/                   # The archived pre-harness evaluation run cited above
+├── docs/                           # Threat model; archive/ holds the pre-harness evaluation run cited above
 │
 ├── backend/
-│   ├── main.py                     # uvicorn entry point
-│   ├── api.py                      # HTTP API: login, chat (SSE), ingest, per-request authorization
-│   ├── auth.py                     # Signed tokens, scrypt password hashes, user store
-│   ├── access_policy.py            # The access rule + Qdrant/Neo4j filter generation
-│   ├── org_policy.yaml             # Active organization policy (levels, groups, super roles)
-│   ├── org_policies/               # Example policies: flat, strict hierarchy, departmental, matrix
-│   ├── manage_users.py             # Create / list / remove users
-│   ├── uploads.py, ratelimit.py, audit.py   # Safe uploads, login rate limiter, audit log
-│   ├── rag_pipeline.py             # Config-driven pipeline: retrieve, rerank, graph, generate
-│   ├── pipeline_config.py          # Presets for the ablation (dense_only, dense_rerank, full, ...)
-│   ├── chunker.py, embedder.py     # Chunking; embedding + encrypted Qdrant indexing
-│   ├── retriever.py, reranker.py   # Filtered retrieval, integrity-checked decryption, dynamic context cutoff
-│   ├── encryptor.py                # AES-GCM-256 with key from environment, ciphertext bound to record + ACL
-│   ├── kg_builder.py, kg_extractors.py  # Graph writes/queries; chunked, schema-validated triple extraction
+│   ├── main.py, api.py             # uvicorn entry point; HTTP API: login, chat (SSE), ingest, documents, per-request authorization
+│   ├── settings.py                 # Central configuration: every model name, address and knob (33 settings, no secrets)
+│   ├── auth.py, access_policy.py   # Signed tokens + scrypt; the one access rule compiled into Qdrant and Neo4j filters
+│   ├── org_policy.yaml, org_policies/   # Active policy and example policies (flat, hierarchy, departmental, matrix)
+│   ├── manage_users.py, uploads.py, ratelimit.py, audit.py   # Users CLI; safe uploads; login rate limiter; audit log
+│   ├── rag_pipeline.py, pipeline_config.py   # Config-driven pipeline and its presets (dense_only ... hybrid_graph_chunks)
+│   ├── chunker.py, embedder.py, sparse.py    # Chunking; dense + keyword (BM25-style, keyed ids) vectors in Qdrant
+│   ├── retriever.py, reranker.py   # Filtered retrieval, integrity-checked decryption, cross-encoder, dynamic cutoff
+│   ├── graph_ranker.py             # Hop-aware ranker (learned weights) for multi-hop questions
+│   ├── kg_builder.py, kg_extractors.py   # Entity graph (entity-to-passage links), extraction with cache
+│   ├── conversation.py             # Follow-up rewriting and server-side history limits
+│   ├── doc_identity.py, doc_registry.py  # Deterministic ids (idempotent ingestion); document registry
+│   ├── encryptor.py                # AES-GCM-256, key from environment, ciphertext bound to record + access rule
 │   ├── llm.py, worker.py           # vLLM client; Celery ingestion task
 │   ├── prepare_large_dataset.py, prepare_hotpot_dataset.py   # Build the SQuAD and HotpotQA evaluation sets
-│   ├── benchmark_security.py       # AES-GCM micro-benchmark
-│   ├── evaluation/                 # generate, judge, report, metrics, tune_context, calibration, results/
-│   ├── tests/                      # Automated tests (access control, auth, API, encryption, graph, metrics)
-│   ├── requirements.txt
-│   └── Dockerfile
+│   ├── evaluation/                 # generate, judge, report, metrics, retrieval_bench, hop_tune, graph_diagnose, calibration, results/
+│   ├── loadtest/                   # Concurrency load test and its results
+│   ├── tests/                      # 329 automated test cases (access control, auth, API, encryption, graph, metrics)
+│   ├── requirements*.txt, constraints.txt, .coveragerc, Dockerfile   # Pinned dependencies, full lock, coverage config
 │
 └── frontend/
-    ├── app.py                      # Streamlit UI: login, upload with access level/groups, chat
+    ├── app.py                      # Streamlit UI: login, upload with access level/groups, documents, chat with sources
     ├── Dockerfile
     └── requirements.txt
 ```
@@ -186,7 +185,9 @@ Open issues and planned work are listed under [Future Roadmap](#future-roadmap--
 python prepare_large_dataset.py && python prepare_hotpot_dataset.py
 python -m evaluation.generate --dataset squad  --config dense_only
 python -m evaluation.generate --dataset squad  --config dense_rerank
-python -m evaluation.generate --dataset hotpot --config full --reset-graph   # WIPES the connected Neo4j
+python -m evaluation.generate --dataset hotpot --config hybrid_graph_chunks --reset-graph   # WIPES the connected Neo4j
+python prepare_hotpot_dataset.py --name hotpot_b --skip 200 --n 100        # the untouched held-out multi-hop set
+python -m evaluation.retrieval_bench --dataset squad_dev_xl --models all-MiniLM-L6-v2   # embedder / hybrid comparison
 python -m evaluation.judge --run-dir evaluation/results/<run_id> --judge-model <model> --judge-url <vLLM URL>
 python -m evaluation.report "evaluation/results/squad__*" --baseline dense_only
 ```
@@ -211,7 +212,7 @@ RAGAS, scored by an **independent judge** (Llama-3.1-8B-Instruct-AWQ, a differen
 | + rerank | **0.965** (0.94-0.99) | 0.879 (0.83-0.93) | 0.794 (0.74-0.84) | 0.776 (0.74-0.82) |
 | + rerank, dynamic context | 0.977 (0.95-0.99) | 0.867 (0.81-0.92) | 0.809 (0.76-0.86) | 0.791 (0.75-0.83) |
 | + rerank, dynamic context, 10 candidates ("fast") | **0.983** (0.96-1.00) | 0.868 (0.81-0.92) | 0.833 (0.79-0.88) | 0.796 (0.76-0.83) |
-| + rerank + graph | 0.840 (0.81-0.87) | 0.872 (0.82-0.92) | **0.871** (0.82-0.92) | 0.790 (0.75-0.83) |
+| + rerank + graph facts (earlier, facts-only graph; superseded, see Multi-hop retrieval) | 0.840 (0.81-0.87) | 0.872 (0.82-0.92) | **0.871** (0.82-0.92) | 0.790 (0.75-0.83) |
 
 What the paired per-question comparisons show (95% CI excludes 0 unless noted):
 - **Reranking helps:** +0.067 MRR (exact), +0.035 RAGAS precision. Recall@3 reaches 1.00. It costs about 300-400 ms per query on CPU.
@@ -323,11 +324,11 @@ Hardware: AMD Ryzen 9 8940HX, Python 3.11.7, Windows 11. Encryption cost is negl
 
 ## Key Outcomes
 
-> **Status:** security claims are verified by automated tests, including attack tests; limits are listed under [Security Model and Limits](#security-model-and-limits). Observability claims are still being tightened. The multi-hop claim is withdrawn until the HotpotQA ablation is run.
+> **Status:** security claims are verified by automated tests, including attack tests; limits are listed under [Security Model and Limits](#security-model-and-limits). The multi-hop claim is now measured on a held-out set (see Multi-hop retrieval, with its limits). Observability claims are still being tightened: Prometheus HTTP metrics exist, but per-stage timings and provisioned Grafana dashboards do not.
 
 - 🛡️ **Policy-driven access control, verified:** one access rule (clearance levels + departments + super roles, defined per organization in `org_policy.yaml`) is compiled into both the Qdrant filter and the Neo4j filter. An exhaustive test checks every user against every document ACL for five organization structures and confirms both databases return exactly what the rule allows. Chunk text is AES-GCM-256 encrypted with a key kept outside the data, and ciphertext is bound to its record and ACL so database tampering cannot widen access. Limits (for example plaintext graph entity names, no built-in TLS) are listed under [Security Model and Limits](#security-model-and-limits).
 - ⚡ **Zero Token Costs & Complete Data Sovereignty:** 100% offline pipeline running on local NVIDIA GPUs. No confidential data ever leaves the on-premises perimeter.
-- 🧠 **Multi-hop retrieval via a knowledge graph:** implemented (Neo4j 1-2 hop expansion, cross-encoder filtered). Its benefit is being measured on HotpotQA; no result is claimed yet.
+- 🧠 **Multi-hop retrieval via a knowledge graph:** both supporting passages reach the model for 87% of 100 held-out HotpotQA questions versus 73% for the previous dense pipeline (+14 points, 95% CI +8 to +21) and 79% for a hybrid baseline with the same four passages (+8 points, CI +3 to +14). Answer accuracy rises less (0.63 to 0.68; the model's ceiling with perfect passages is 0.81).
 - 📈 **Observability:** Prometheus instrumentator exposes HTTP latency and request counts; vLLM exposes its own metrics endpoint.
 
 ---
@@ -363,7 +364,7 @@ Planned next steps (items marked *done in v2* have already shipped):
 ### Phase 1: Ingestion Optimization & OCR Fallback
 - **Neo4j `UNWIND` Batch Ingestion (done in v2):** Transition from single-transaction Cypher insertions to parameterized batch `UNWIND` queries to accelerate Knowledge Graph construction by **10x–50x**.
 - **Automated OCR Fallback:** Detect image-only and low-character PDF uploads and dynamically route them through **Tesseract OCR** before chunking.
-- **Neo4j Full-Text Indexes:** Upgrade entity lookup from `CONTAINS` string scans to Lucene-backed full-text indexes for O(1) retrieval.
+- **Entity lookup (done in v2):** `CONTAINS` string scans were replaced by exact, indexed entity keys.
 
 ### Phase 2: Enterprise Identity & Granular Multi-Tenant RBAC
 - **Done in v2:** token-based login, organization-configurable access policy applied to both vector and graph retrieval, upload hardening, audit log, rate limiting. **Remaining:**
@@ -376,6 +377,7 @@ Planned next steps (items marked *done in v2* have already shipped):
 - **Inline Visual Rendering:** Pass image source identifiers back to the chat UI to display original diagrams alongside text answers.
 
 ### Phase 4: CI/CD Quality Gates & Evaluation Pipelines
+- **CI (done in v2):** GitHub Actions runs lint, the full test suite against real Neo4j and Qdrant (87% coverage, floor 80%), a Docker build and a dependency audit on every push; Dependabot keeps pins fresh. **Remaining:**
 - **Automated RAGAS Regression Tests:** Integrate evaluation runs into CI/CD pipelines to block releases if Answer Relevancy or Faithfulness degrades below established thresholds.
 - **Dedicated Judge LLMs (partly done in v2: the judge is a separate model run in a separate pass):** Decouple evaluation onto specialized grading models (e.g., `Prometheus-2` or `Patronus`) to prevent judge workloads from contending for serving VRAM.
 
