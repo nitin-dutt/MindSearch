@@ -852,7 +852,8 @@ with chat_container:
                 st.caption(f"🔎 Searched for: {html.escape(message['standalone'])}")
             if message.get("sources"):
                 st.caption("Sources: " + " · ".join(
-                    f"📄 {html.escape(src['filename'])} (part {src['chunk_index'] + 1})" if src.get("chunk_index") is not None
+                    f"📄 {html.escape(src['filename'])} (page {src['page']})" if src.get("page") is not None
+                    else f"📄 {html.escape(src['filename'])} (part {src['chunk_index'] + 1})" if src.get("chunk_index") is not None
                     else f"📄 {html.escape(src['filename'])}" for src in message["sources"]))
 
 # --- INPUT AREA ---

@@ -22,6 +22,8 @@ class PipelineConfig:
     # ingestion
     chunk_size: int = 150          # words
     chunk_overlap: int = 20        # words
+    split_long_paragraphs: bool = True   # cut paragraphs longer than chunk_size at sentence boundaries (False for the benchmark corpora,
+                                         # whose lines are already whole passages)
     # retrieval
     use_reranker: bool = True
     use_graph: bool = True
