@@ -96,7 +96,7 @@ def main():
         raise SystemExit("Use a dev dataset; the frozen test set is for final reporting only.")
 
     corpus_path, items = load_dataset(args.dataset, args.n)
-    chunks = run_chunking(corpus_path)
+    chunks = run_chunking(corpus_path, split_long=False)       # benchmark passages stay whole
     cache_key = hashlib.sha256(("\n".join(chunks)).encode()).hexdigest()[:12]
     questions = [it["question"] for it in items]
     print(f"{args.dataset}: {len(chunks)} chunks, {len(items)} questions")

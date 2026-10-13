@@ -261,7 +261,7 @@ def test_retrieved_chunks_point_back_to_their_document(pipeline_factory, corpus_
     info = rag.ingest_document(corpus_file, EVERYONE)
     result = rag.retrieve("When was the Eiffel Tower completed?", EMPLOYEE)
     assert result.chunks and all(c["doc_id"] == info["doc_id"] and isinstance(c["chunk_index"], int) for c in result.chunks)
-    assert result.sources() == [{"doc_id": info["doc_id"], "chunk_index": result.chunks[0]["chunk_index"]}]
+    assert result.sources() == [{"doc_id": info["doc_id"], "chunk_index": result.chunks[0]["chunk_index"], "page": None}]   # a .md file has no pages
 
 
 def test_ingest_reports_how_many_chunks_were_written(pipeline_factory, corpus_file):

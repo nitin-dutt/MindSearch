@@ -81,13 +81,15 @@ def close_qdrant_client(path: str):
         client.close()
 
 
-def build_embeddings(plaintext_chunks, encryptor, acl, db_path=None, collection_name=None, doc_id=None):
+def build_embeddings(plaintext_chunks, encryptor, acl, db_path=None, collection_name=None, doc_id=None, pages=None):
     """Embed chunks and store them encrypted. `acl` (access_policy.DocACL) is stored on every point and
     enforced at query time; each ciphertext is bound to its point id and ACL so it cannot be moved or
     have its permissions edited without failing decryption.
 
     With a `doc_id`, point ids are deterministic (doc_id + chunk position), so re-ingesting the same document
-    overwrites its points instead of duplicating them (safe retries, safe re-uploads)."""
+    overwrites its points instead of duplicating them (safe retries, safe re-uploads).
+
+    `pages` (optional) is [(first page, last page)] per chunk for PDFs; it is stored so answers can cite a page."""
     db_path, collection_name = _defaults(db_path, collection_name)
     acl_payload = acl.to_payload()
     client = get_qdrant_client(db_path)
@@ -121,7 +123,8 @@ def build_embeddings(plaintext_chunks, encryptor, acl, db_path=None, collection_
                 vector={DENSE: embedding.tolist(), KEYWORDS: SparseVector(indices=term_ids, values=term_weights)},
                 # Qdrant payloads must be JSON serializable, so the bytes are stored as hex
                 payload={"chunk_data": encrypted.hex(), **acl_payload,
-                         **({"doc_id": doc_id, "chunk_index": index} if doc_id else {})}
+                         **({"doc_id": doc_id, "chunk_index": index} if doc_id else {}),
+                         **_page_payload(pages, index)}
             )
         )
 
@@ -130,6 +133,14 @@ def build_embeddings(plaintext_chunks, encryptor, acl, db_path=None, collection_
         points=points
     )
     return True
+
+
+def _page_payload(pages, index):
+    """{"page": first page, "page_end": last page} when the chunk has pages (PDF), else nothing."""
+    if not pages or pages[index][0] is None:
+        return {}
+    first, last = pages[index]
+    return {"page": first, **({"page_end": last} if last != first else {})}
 
 
 def search_embeddings(query, user, policy, db_path=None, collection_name=None, k=5, hybrid=False, encryptor=None,
@@ -183,7 +194,7 @@ def search_embeddings(query, user, policy, db_path=None, collection_name=None, k
         hex_data = hit.payload.get("chunk_data", "")
         payloads.append(bytes.fromhex(hex_data) if hex_data else b'')
         aads.append(record_aad(hit.id, hit.payload))
-        metas.append({"doc_id": hit.payload.get("doc_id"), "chunk_index": hit.payload.get("chunk_index")})
+        metas.append({"doc_id": hit.payload.get("doc_id"), "chunk_index": hit.payload.get("chunk_index"), "page": hit.payload.get("page")})
 
     return scores, payloads, aads, metas
 
@@ -206,7 +217,7 @@ def fetch_chunks(refs, user, policy, db_path=None, collection_name=None):
         hex_data = hit.payload.get("chunk_data", "")
         payloads.append(bytes.fromhex(hex_data) if hex_data else b"")
         aads.append(record_aad(hit.id, hit.payload))
-        metas.append({"doc_id": hit.payload.get("doc_id"), "chunk_index": hit.payload.get("chunk_index")})
+        metas.append({"doc_id": hit.payload.get("doc_id"), "chunk_index": hit.payload.get("chunk_index"), "page": hit.payload.get("page")})
     return payloads, aads, metas
 
 

@@ -75,7 +75,8 @@ def build_pipeline(dataset, corpus_path, cfg, rebuild=False):
 
     with open(key_file, "rb") as f:
         encryptor = Encryptor(key=f.read())
-    run_cfg = cfg.with_overrides(qdrant_path=index_path, collection=collection)
+    # the benchmark corpora hold one whole passage per line and gold passages must stay whole, so no sentence splitting here
+    run_cfg = cfg.with_overrides(qdrant_path=index_path, collection=collection, split_long_paragraphs=False)
     rag = RAGPipeline(run_cfg, encryptor=encryptor)
 
     if not reuse:
@@ -104,7 +105,7 @@ def build_graph(rag, corpus_path):
     # Outside the index folder on purpose: that folder is deleted whenever the index is rebuilt.
     rag.kg_builder.extractor = CachedExtractor(
         rag.kg_builder.extractor, os.path.join(EVAL_INDEX_DIR, "kg_cache", f"{cfg.collection}.jsonl"))
-    chunks = run_chunking(corpus_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap)
+    chunks = run_chunking(corpus_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap, split_long=cfg.split_long_paragraphs)
     t0 = time.time()
     from doc_identity import compute_doc_id
     # the graph must use the same document id as the vector index: it is how a graph hit finds its passage

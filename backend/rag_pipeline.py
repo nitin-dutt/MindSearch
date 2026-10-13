@@ -1,7 +1,7 @@
 import time
 from dataclasses import dataclass, field
 
-from chunker import run_chunking
+from chunker import run_chunking_with_pages
 from embedder import build_embeddings
 from retriever import load_chunks, retrieve_detailed
 import graph_ranker
@@ -25,12 +25,13 @@ class RetrievalResult:
 
     def sources(self):
         """Which documents the final chunks came from, in rank order, one entry per document:
-        [{"doc_id", "chunk_index"}]. The UI turns these into citations (and later page / image links)."""
+        [{"doc_id", "chunk_index", "page"}]. The UI turns these into citations; `page` (1-based, PDFs only) is the first page of the
+        best-ranked chunk from that document."""
         seen, out = set(), []
         for r in self.chunks:
             if r.get("doc_id") and r["doc_id"] not in seen:
                 seen.add(r["doc_id"])
-                out.append({"doc_id": r["doc_id"], "chunk_index": r.get("chunk_index")})
+                out.append({"doc_id": r["doc_id"], "chunk_index": r.get("chunk_index"), "page": r.get("page")})
         return out
 
     def to_context(self):
@@ -69,9 +70,11 @@ class RAGPipeline:
         """Chunk -> embed -> encrypt (bound to record + ACL) -> index in Qdrant. Returns the plaintext chunks."""
         cfg = self.config
         doc_id = doc_id or compute_doc_id(file_path, acl)
-        plaintext_chunks = run_chunking(file_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap)
+        chunks = run_chunking_with_pages(file_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap,
+                                         split_long=cfg.split_long_paragraphs)
+        plaintext_chunks = [c.text for c in chunks]
         build_embeddings(plaintext_chunks, self.encryptor, acl, cfg.qdrant_path,
-                         collection_name=cfg.collection, doc_id=doc_id)
+                         collection_name=cfg.collection, doc_id=doc_id, pages=[(c.page_start, c.page_end) for c in chunks])
         return plaintext_chunks
 
     def ingest_graph(self, plaintext_chunks, acl: DocACL, doc_id=None):
