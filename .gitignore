@@ -102,3 +102,6 @@ htmlcov/
 
 # Local demo accounts (random passwords, local testing only)
 demo_credentials.txt
+
+# Personal study material (manual, exercises): local reference only
+study/
