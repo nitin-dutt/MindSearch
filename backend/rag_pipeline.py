@@ -3,7 +3,8 @@ from dataclasses import dataclass, field
 
 from chunker import run_chunking
 from embedder import build_embeddings
-from retriever import retrieve
+from retriever import load_chunks, retrieve_detailed
+import graph_ranker
 from llm import stream_generate
 from encryptor import Encryptor
 from pipeline_config import PipelineConfig
@@ -20,6 +21,7 @@ class RetrievalResult:
     dense_pool: list = field(default_factory=list)   # decrypted dense candidates, pre-rerank order
     graph_pool: list = field(default_factory=list)   # raw graph facts before reranking
     timings_ms: dict = field(default_factory=dict)
+    graph_chunks_added: int = 0                       # final passages that came in through the graph, not the search
 
     def sources(self):
         """Which documents the final chunks came from, in rank order, one entry per document:
@@ -106,24 +108,88 @@ class RAGPipeline:
         result = RetrievalResult()
 
         t0 = time.perf_counter()
-        result.chunks, result.dense_pool = retrieve(
+        detail = retrieve_detailed(
             query, cfg.qdrant_path, user, self.policy, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
             reranker=self.reranker, encryptor=self.encryptor,
             collection_name=cfg.collection, rerank_margin=cfg.rerank_margin,
             hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool,
         )
+        result.chunks, result.dense_pool = detail["results"], detail["pool"]
         result.timings_ms["dense_and_rerank"] = (time.perf_counter() - t0) * 1000
 
         if self.kg_builder is not None:
             t0 = time.perf_counter()
-            result.graph_pool = self.kg_builder.get_graph_context(query, user)
-            if self.reranker is not None:
-                result.graph_facts = self.reranker.rerank(query, result.graph_pool, top_k=cfg.graph_k)
-            else:
-                result.graph_facts = [{"chunk": f, "score": 0.0} for f in result.graph_pool[:cfg.graph_k]]
+            seed_keys = []
+            if cfg.graph_expand and result.chunks:
+                seed_keys = self._graph_expand(query, user, result, detail)
+            if cfg.graph_k > 0:
+                result.graph_pool = self.kg_builder.get_graph_context(query, user, seed_keys=seed_keys)
+                if self.reranker is not None:
+                    result.graph_facts = self.reranker.rerank(query, result.graph_pool, top_k=cfg.graph_k)
+                else:
+                    result.graph_facts = [{"chunk": f, "score": 0.0} for f in result.graph_pool[:cfg.graph_k]]
             result.timings_ms["graph"] = (time.perf_counter() - t0) * 1000
 
         return result
+
+    def graph_candidates(self, query, user, detail):
+        """Score the search pool plus graph-linked passages for hop-aware ranking. Returns a list of
+        {"chunk", "doc_id", "chunk_index", "ce", "cover", "page_q", "page_s", "via_graph"} and the seed entity keys.
+
+        A second-hop passage does not look like the question, so the cross-encoder alone ranks it too low. The graph supplies
+        what the text cannot: which entities the question names (Q), which entities the best passages mention (S, the
+        bridge), which passages mention them, and which passage is the "page" (title) of an entity. Those become bonuses."""
+        cfg, kg = self.config, self.kg_builder
+        pool, metas = detail["pool"], detail["pool_meta"]
+        if not pool or self.reranker is None:
+            return [], []
+        scored = self.reranker.rerank(query, pool, top_k=len(pool))          # best first, every pool item scored
+        items = [{"chunk": r["chunk"], **metas[r["original_index"]], "ce": r["score"], "via_graph": 0,
+                  "pool_rank": 1.0 / (1 + r["original_index"])} for r in scored]
+        seed_refs = [(c["doc_id"], c["chunk_index"]) for c in items[:cfg.graph_seed_k]
+                     if c.get("doc_id") is not None and c.get("chunk_index") is not None]
+        s_keys = set(kg.entities_in_chunks(seed_refs, user))
+        q_keys = set(kg.query_entity_keys(query))
+        cand = kg.candidate_chunks(sorted(q_keys | s_keys), user, cfg.graph_hub_limit)
+        in_pool = {(c.get("doc_id"), c.get("chunk_index")) for c in items}
+        new_refs = sorted((r for r in cand if r not in in_pool), key=lambda r: (-len(cand[r]["keys"]) - 2 * len(cand[r]["pages"]), r))
+        extra = load_chunks(new_refs[:cfg.graph_chunk_pool], user, self.policy, self.encryptor, cfg.qdrant_path, cfg.collection)
+        if extra:
+            for r in self.reranker.rerank(query, [e["chunk"] for e in extra], top_k=len(extra)):
+                items.append({**extra[r["original_index"]], "ce": r["score"], "via_graph": 1, "pool_rank": 0.0})
+        mentions = kg.entities_by_chunk([(c["doc_id"], c["chunk_index"]) for c in items if c.get("doc_id") is not None], user)
+        best_ce = max(c["ce"] for c in items)
+        bridge = s_keys - q_keys
+        for c in items:
+            ref = (c.get("doc_id"), c.get("chunk_index"))
+            pages = cand.get(ref, {}).get("pages", set())
+            seen = mentions.get(ref, set())
+            c["cover"] = len(seen & q_keys)
+            c["cover_frac"] = c["cover"] / max(1, len(q_keys))
+            c["cover_s"] = min(5, len(seen & bridge))
+            c["page_q"] = 1 if pages & q_keys else 0
+            c["page_s"] = 1 if pages & bridge else 0
+            c["ce_gap"] = c["ce"] - best_ce
+        return items, sorted(q_keys | s_keys)
+
+    def graph_select(self, items):
+        """Final passages by the hop-aware score (graph_ranker), best first."""
+        cfg = self.config
+        for c in items:
+            c["score"] = graph_ranker.score(c)
+        chosen = sorted(items, key=lambda c: -c["score"])[:cfg.final_k]
+        if cfg.rerank_margin is not None and chosen:
+            chosen = [c for c in chosen if c["score"] >= chosen[0]["score"] - cfg.rerank_margin]
+        return chosen
+
+    def _graph_expand(self, query, user, result, detail):
+        """Graph-guided passage hops (the multi-hop step): choose the final passages with the hop-aware score.
+        Returns the seed entity keys (also used to fetch graph facts)."""
+        items, keys = self.graph_candidates(query, user, detail)
+        if items:
+            result.chunks = self.graph_select(items)
+            result.graph_chunks_added = sum(1 for r in result.chunks if r.get("via_graph"))
+        return keys
 
     def retrieve_context(self, query, user: User):
         return self.retrieve(query, user).to_context()

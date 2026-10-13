@@ -296,7 +296,7 @@ def create_app_from_env() -> FastAPI:
     users = auth.UserStore.from_yaml(cfg.users_file)
     _set_torch_threads()
     from pipeline_config import get_preset
-    # PIPELINE_PRESET picks the retrieval strategy: full (default), dense_rerank_dynamic, dense_rerank_fast, ...
+    # PIPELINE_PRESET picks the retrieval strategy: hybrid_graph_chunks (default), dense_rerank_dynamic, dense_rerank_fast, ...
     app = create_app(RAGPipeline(get_preset(cfg.pipeline_preset)), users, auth.load_secret(),
                      dispatch=_celery_dispatch)
     Instrumentator().instrument(app).expose(app)

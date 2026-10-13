@@ -217,8 +217,11 @@ def extract_with_retry(extractor, chunk, attempts=2):
     raise ExtractionError(str(last)) from last
 
 
-def extract_chunks(extractor, chunks, workers=1, min_words=5, attempts=2, progress_every=10):
-    """Extract triples from every chunk. Returns (cleaned triples, ExtractionStats)."""
+def extract_chunks(extractor, chunks, workers=1, min_words=5, attempts=2, progress_every=10, mentions_out=None):
+    """Extract triples from every chunk. Returns (cleaned triples, ExtractionStats).
+
+    If `mentions_out` (a list) is given, it is filled with (entity name, chunk index) for every entity that a chunk's
+    facts mention. The graph stores this so a fact can lead back to the passage it came from (graph-guided retrieval)."""
     stats = ExtractionStats(extractor=extractor.name, chunks_total=len(chunks))
     started = time.time()
     done = 0
@@ -244,10 +247,13 @@ def extract_chunks(extractor, chunks, workers=1, min_words=5, attempts=2, progre
         results = list(pool.map(run, chunks))
 
     raw = []
-    for status, triples in results:
+    for index, (status, triples) in enumerate(results):
         if status == "ok":
             stats.chunks_ok += 1
             raw.extend(triples)
+            if mentions_out is not None:
+                names = {n for t in clean_triples(triples) for n in (t.subject, t.object)}
+                mentions_out.extend((name, index) for name in sorted(names))
         elif status == "skipped":
             stats.chunks_skipped_short += 1
         else:

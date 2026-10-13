@@ -1,12 +1,39 @@
 import logging
 
-from embedder import search_embeddings
+from embedder import fetch_chunks, search_embeddings
 
 log = logging.getLogger("mindsearch.security")
 
 
-def retrieve(query, db_path, user, policy, candidate_k=20, final_k=3, reranker=None, encryptor=None,
-             collection_name=None, rerank_margin=None, hybrid=False, hybrid_pool=50):
+def decrypt_hits(payloads, aads, scores, metas, encryptor):
+    """Decrypt retrieved chunks. A chunk that fails its integrity check (wrong key, copied ciphertext, edited access rule)
+    is dropped and reported; it is never served and never replaced by empty text. Returns (texts, scores, metas)."""
+    texts, kept_scores, kept_metas = [], [], []
+    for score, payload, aad, meta in zip(scores, payloads, aads, metas):
+        try:
+            texts.append(encryptor.decrypt(payload, aad))
+            kept_scores.append(score)
+            kept_metas.append(meta)
+        except Exception:  # noqa: BLE001 - InvalidTag, short payload, bad utf-8: all mean "do not serve"
+            log.error("SECURITY: a stored chunk failed its integrity check and was skipped (possible tampering)")
+    return texts, kept_scores, kept_metas
+
+
+def load_chunks(refs, user, policy, encryptor, db_path=None, collection_name=None):
+    """Decrypted passages for (doc_id, chunk_index) references the user may read: [{"chunk", "doc_id", "chunk_index"}]."""
+    payloads, aads, metas = fetch_chunks(refs, user, policy, db_path=db_path, collection_name=collection_name)
+    texts, _, kept = decrypt_hits(payloads, aads, [0.0] * len(payloads), metas, encryptor)
+    return [{"chunk": t, **m} for t, m in zip(texts, kept)]
+
+
+def retrieve(*args, **kwargs):
+    """(results, pool) - see retrieve_detailed."""
+    detail = retrieve_detailed(*args, **kwargs)
+    return detail["results"], detail["pool"]
+
+
+def retrieve_detailed(query, db_path, user, policy, candidate_k=20, final_k=3, reranker=None, encryptor=None,
+                      collection_name=None, rerank_margin=None, hybrid=False, hybrid_pool=50):
     """
     Dense (or hybrid dense + keyword) retrieval from Qdrant, optionally followed by cross-encoder re-ranking and a dynamic cutoff
     (rerank_margin) that sends only the chunks that score close to the best one.
@@ -26,20 +53,11 @@ def retrieve(query, db_path, user, policy, candidate_k=20, final_k=3, reranker=N
     )
 
     if not encrypted_payloads:
-        return [], []
+        return {"results": [], "pool": [], "pool_meta": []}
 
-    # Decrypt. A chunk that fails its integrity check (wrong key, copied ciphertext, edited access rule) is
-    # dropped and reported; it is never served and never replaced by empty text.
-    pool, pool_scores, pool_meta = [], [], []
-    for score, payload, aad, meta in zip(dense_scores, encrypted_payloads, aads, metas):
-        try:
-            pool.append(encryptor.decrypt(payload, aad))
-            pool_scores.append(score)
-            pool_meta.append(meta)
-        except Exception:  # noqa: BLE001 - InvalidTag, short payload, bad utf-8: all mean "do not serve"
-            log.error("SECURITY: a stored chunk failed its integrity check and was skipped (possible tampering)")
+    pool, pool_scores, pool_meta = decrypt_hits(encrypted_payloads, aads, dense_scores, metas, encryptor)
     if not pool:
-        return [], []
+        return {"results": [], "pool": [], "pool_meta": []}
 
     if reranker and pool:
         reranked = reranker.rerank(query, pool, top_k=final_k)
@@ -51,4 +69,4 @@ def retrieve(query, db_path, user, policy, candidate_k=20, final_k=3, reranker=N
     else:
         results = [{"chunk": pool[i], "score": pool_scores[i], **pool_meta[i]} for i in range(min(final_k, len(pool)))]
 
-    return results, pool
+    return {"results": results, "pool": pool, "pool_meta": pool_meta}

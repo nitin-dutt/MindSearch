@@ -1,7 +1,7 @@
 from sentence_transformers import SentenceTransformer
 from qdrant_client.models import (VectorParams, Distance, PointStruct, PayloadSchemaType, Filter,
                                   FieldCondition, MatchValue, FilterSelector, SparseVectorParams, SparseVector,
-                                  Modifier, Prefetch, FusionQuery, Fusion)
+                                  Modifier, Prefetch, FusionQuery, Fusion, HasIdCondition)
 import atexit
 import uuid
 
@@ -186,6 +186,28 @@ def search_embeddings(query, user, policy, db_path=None, collection_name=None, k
         metas.append({"doc_id": hit.payload.get("doc_id"), "chunk_index": hit.payload.get("chunk_index")})
 
     return scores, payloads, aads, metas
+
+
+def fetch_chunks(refs, user, policy, db_path=None, collection_name=None):
+    """Load specific passages by (doc_id, chunk_index) - e.g. the ones a graph hit points to - with the SAME access filter
+    as a search, so a reference the user may not read simply returns nothing.
+    Returns (encrypted payloads, associated data, source metadata) for the passages that exist and are readable."""
+    db_path, collection_name = _defaults(db_path, collection_name)
+    client = get_qdrant_client(db_path)
+    if not refs or not client.collection_exists(collection_name=collection_name):
+        return [], [], []
+    _check_schema(client, db_path, collection_name)
+    ids = [make_point_id(doc_id, index) for doc_id, index in refs]
+    access = policy.qdrant_filter(user)
+    flt = Filter(must=[HasIdCondition(has_id=ids)] + ([access] if access is not None else []))
+    points, _ = client.scroll(collection_name, scroll_filter=flt, limit=len(ids), with_payload=True, with_vectors=False)
+    payloads, aads, metas = [], [], []
+    for hit in points:
+        hex_data = hit.payload.get("chunk_data", "")
+        payloads.append(bytes.fromhex(hex_data) if hex_data else b"")
+        aads.append(record_aad(hit.id, hit.payload))
+        metas.append({"doc_id": hit.payload.get("doc_id"), "chunk_index": hit.payload.get("chunk_index")})
+    return payloads, aads, metas
 
 
 def count_document_chunks(doc_id, db_path=None, collection_name=None):
