@@ -1,0 +1,58 @@
+{
+  "dataset": "hotpot",
+  "n": 200,
+  "ceiling_both_passages_among_candidates": 0.91,
+  "cross_validated": {
+    "cross-encoder only": {
+      "both_passages_in_top3": 0.7,
+      "folds": [
+        0.7,
+        0.775,
+        0.825,
+        0.525,
+        0.675
+      ]
+    },
+    "cross-encoder + entity coverage": {
+      "both_passages_in_top3": 0.7,
+      "folds": [
+        0.7,
+        0.775,
+        0.8,
+        0.55,
+        0.675
+      ]
+    },
+    "cross-encoder + coverage + pages": {
+      "both_passages_in_top3": 0.765,
+      "folds": [
+        0.775,
+        0.8,
+        0.875,
+        0.6,
+        0.775
+      ]
+    },
+    "all features": {
+      "both_passages_in_top3": 0.755,
+      "folds": [
+        0.75,
+        0.8,
+        0.9,
+        0.55,
+        0.775
+      ]
+    }
+  },
+  "weights_fitted_on_all": {
+    "ce": 0.05813230820016878,
+    "ce_gap": 0.2305751499644208,
+    "cover": -0.1752077871280783,
+    "cover_frac": 1.0006336647859264,
+    "cover_s": 0.004871263212041055,
+    "page_q": 2.942086615838548,
+    "page_s": 2.8098670358746913,
+    "via_graph": -0.5249146290876897,
+    "pool_rank": 1.313136569525823
+  }
+}
