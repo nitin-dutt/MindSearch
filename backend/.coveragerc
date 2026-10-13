@@ -1,0 +1,19 @@
+# Coverage is reported for the application code only. Tests, the evaluation and load-test harnesses, one-off scripts and the
+# entry point are excluded so the percentage means "how much of the product code the tests exercise".
+[run]
+source = .
+omit =
+    tests/*
+    evaluation/*
+    loadtest/*
+    conftest.py
+    prepare_*.py
+    seed_demo_users.py
+    benchmark_security.py
+    reset_qdrant.py
+    main.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:

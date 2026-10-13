@@ -1,0 +1,7 @@
+# Lint settings (CI runs `ruff check`). Deliberately small: real bugs only (syntax errors and pyflakes: unused or
+# undefined names, bad f-strings), no style rules, so the check stays quiet and every finding matters.
+target-version = "py312"
+extend-exclude = ["backend/eval_data", "backend/qdrant_eval", "backend/qdrant_db", "backend/uploads", "docs"]
+
+[lint]
+select = ["E9", "F"]
