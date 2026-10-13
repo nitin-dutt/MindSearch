@@ -107,7 +107,7 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
     # assistant messages are not part of the real conversation, so they are left out.
     api_messages = []
     for msg in st.session_state.messages[-12:]:
-        if msg["role"] == "assistant" and msg["content"].startswith(("Error:", "Your session expired")):
+        if msg["role"] == "assistant" and (msg.get("error") or msg["content"].startswith(("Error:", "Your session expired"))):
             continue
         api_messages.append({
             "role": msg["role"],
@@ -138,6 +138,13 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
             if response.status_code == 401:
                 sign_out("Your session expired. Please sign in again.")
                 return "Your session expired. Please sign in again.", time.perf_counter() - start_time
+            if response.status_code in (502, 503):
+                try:
+                    detail = response.json().get("detail", "")
+                except ValueError:
+                    detail = ""
+                st.session_state.last_error = detail or "The answer service is unavailable. Please try again in a moment."
+                return "", time.perf_counter() - start_time
             response.raise_for_status()
 
             full_response = ""
@@ -157,7 +164,7 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
                                 if content:
                                     full_response += content
                             elif 'error' in chunk:
-                                full_response += f"\nError: {chunk['error']}"
+                                st.session_state.last_error = chunk['error']      # shown as a warning under the partial answer
                             elif 'sources' in chunk:
                                 st.session_state.last_sources = chunk['sources']
                             elif 'standalone_question' in chunk:
@@ -166,6 +173,8 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
                             pass
 
             elapsed = time.perf_counter() - start_time
+            if not full_response and st.session_state.get("last_error"):
+                return "", elapsed
             return full_response if full_response else "No response received.", elapsed
         else:
             response = requests.post(API_ENDPOINT, json=payload, headers=headers, timeout=120)
@@ -203,9 +212,11 @@ def process_user_message(message: str):
         response, elapsed_time = send_message(message, stream=True)
         status_placeholder.empty()
 
+        error = st.session_state.pop("last_error", None)
         st.session_state.messages.append({
             "role": "assistant",
             "content": response,
+            "error": error,
             "elapsed_time": elapsed_time,
             "sources": st.session_state.pop("last_sources", []),
             "standalone": st.session_state.pop("last_standalone", None)
@@ -845,6 +856,8 @@ with chat_container:
             </div>
             """, unsafe_allow_html=True)
             
+            if message.get("error"):
+                st.warning("⚠️ " + message["error"])
             elapsed_time = message.get("elapsed_time")
             if elapsed_time:
                 st.markdown(f"<div class='timing'>Response time: {elapsed_time:.2f}s</div>", unsafe_allow_html=True)

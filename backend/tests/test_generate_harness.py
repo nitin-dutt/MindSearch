@@ -6,7 +6,7 @@ import pytest
 pytest.importorskip("openai")
 
 from evaluation import generate as G  # noqa: E402
-from llm import LLM_ERROR_PREFIX  # noqa: E402
+from llm import LLMError  # noqa: E402
 
 
 class FakeRag:
@@ -16,6 +16,8 @@ class FakeRag:
 
     async def stream_answer(self, query, context):
         for tok in self.answers[query]:
+            if isinstance(tok, Exception):
+                raise tok
             yield tok
 
 
@@ -32,7 +34,7 @@ def test_generate_all_scores_failures_and_empty_context_separately():
         _rec("b", "q-err", ["<doc>x</doc>"]),
         _rec("c", "q-empty", []),
     ]
-    rag = FakeRag({"q-ok": ["The jersey was ", "white."], "q-err": [f"{LLM_ERROR_PREFIX} boom"], "q-empty": []})
+    rag = FakeRag({"q-ok": ["The jersey was ", "white."], "q-err": ["partial ", LLMError("boom")], "q-empty": []})
     asyncio.run(G.generate_all(rag, records, concurrency=2))
     ok, err, empty = records
 

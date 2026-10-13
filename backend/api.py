@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 import auth
 import conversation as conv
+from llm import LLMError
 from settings import get_settings
 from access_policy import PolicyError, User, can_access
 from audit import AuditLog, text_fingerprint
@@ -167,15 +168,31 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
             names = await anyio.to_thread.run_sync(rag.registry.filenames, [x["doc_id"] for x in sources])
             sources = [{**x, "filename": names.get(x["doc_id"], "(unknown)")} for x in sources]
 
+        # Ask for the first token BEFORE the response starts: if the model is down the client gets a real HTTP 503 instead of a
+        # 200 stream whose "answer" is an error message.
+        answer = rag.stream_answer(user_query, context, conv.for_generation(history))
+        try:
+            first = await answer.__anext__()
+        except StopAsyncIteration:
+            first = None
+        except LLMError:
+            audit.log("chat_failed", user=user.id, reason="language_model_unavailable")
+            raise HTTPException(status_code=503, detail="The answer service is unavailable. Please try again in a moment.")
+
         async def event_stream():
             if rewritten:
                 yield f"data: {json.dumps({'standalone_question': user_query})}\n\n"
+            failed = False
             try:
-                async for token in rag.stream_answer(user_query, context, conv.for_generation(history)):
+                if first is not None:
+                    yield f"data: {json.dumps({'choices': [{'delta': {'content': first}}]})}\n\n"
+                async for token in answer:
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
-            except Exception as e:  # noqa: BLE001
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            if sources:
+            except Exception as e:  # noqa: BLE001 - the stream has started, so the failure travels as an event
+                failed = True
+                audit.log("chat_failed", user=user.id, reason=type(e).__name__)
+                yield f"data: {json.dumps({'error': 'The answer was interrupted. Please try again.'})}\n\n"
+            if sources and not failed:
                 yield f"data: {json.dumps({'sources': sources})}\n\n"
             yield "data: [DONE]\n\n"
 

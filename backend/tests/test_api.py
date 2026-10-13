@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import api  # noqa: E402
 import auth  # noqa: E402
 import uploads  # noqa: E402
+from llm import LLMError  # noqa: E402
 from access_policy import AccessPolicy, PolicyError  # noqa: E402
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 from doc_registry import DocumentRegistry  # noqa: E402
@@ -31,6 +32,7 @@ class FakeRag:
         self.policy, self.context, self.registry = POLICY, context, registry
         self.asked_as, self.deleted, self.source_doc_id = [], [], None
         self.queries, self.histories = [], []
+        self.fail = None                      # "start": the model is down; "mid": it dies after the first words
 
     def retrieve(self, query, user):
         self.asked_as.append(user)
@@ -46,8 +48,12 @@ class FakeRag:
 
     async def stream_answer(self, query, context, history=None):
         self.histories.append(history)
+        if self.fail == "start":
+            raise LLMError("down")
         for tok in ("Hello ", "world"):
             yield tok
+            if self.fail == "mid":
+                raise LLMError("cut off")
 
 
 @pytest.fixture
@@ -496,3 +502,24 @@ def test_the_audit_log_records_that_a_rewrite_happened_but_not_the_text(env):
     assert chat_row["rewritten"] is True and chat_row["history_messages"] == 2
     raw = open(env.audit_path, encoding="utf-8").read()
     assert "Contoso" not in raw and "price" not in raw
+
+
+# ------------------------------------------------------------ model failures are errors, not answers (GEN-04)
+
+def test_a_model_that_is_down_gives_a_503_not_an_answer(env):
+    env.rag.fail = "start"
+    r = chat(env, env.login("staff"))
+    assert r.status_code == 503
+    assert "unavailable" in r.json()["detail"] and "down" not in r.text          # internals are not leaked
+    assert "Hello" not in r.text and "choices" not in r.text
+    assert any('"chat_failed"' in line for line in open(env.audit_path, encoding="utf-8"))
+
+
+def test_a_model_that_dies_mid_answer_sends_an_error_event_and_no_sources(env):
+    env.rag.fail, env.rag.source_doc_id = "mid", "doc-1"
+    r = chat(env, env.login("staff"))
+    assert r.status_code == 200
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and "[DONE]" not in line]
+    assert any("choices" in e for e in events) and any("error" in e for e in events)    # the partial text, then the error
+    assert not any("sources" in e for e in events)                                       # an interrupted answer cites nothing
+    assert r.text.rstrip().endswith("data: [DONE]") and "cut off" not in r.text           # the stream still ends cleanly

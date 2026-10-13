@@ -12,7 +12,7 @@ import json
 
 from evaluation import metrics as M
 from evaluation.datasets import load_dataset
-from llm import LLM_ERROR_PREFIX, SYSTEM_PROMPT, client
+from llm import SYSTEM_PROMPT, client
 from settings import get_settings
 
 
@@ -36,7 +36,7 @@ async def main():
                           {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{item['question']}\n\nAnswer:"}])
         answer = r.choices[0].message.content or ""
         return {"contains": M.contains_gold(answer, item["ground_truth"]), "f1": M.token_f1(answer, item["ground_truth"]),
-                "failed": answer.startswith(LLM_ERROR_PREFIX)}
+                "failed": not answer.strip()}
 
     rows = await asyncio.gather(*(one(i) for i in items))
     n = len(rows)

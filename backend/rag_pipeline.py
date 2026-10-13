@@ -5,12 +5,18 @@ from chunker import run_chunking_with_pages
 from embedder import build_embeddings
 from retriever import load_chunks, retrieve_detailed
 import graph_ranker
-from llm import stream_generate
+import logging
+
+from budget import context_budget, fit_context
+from llm import SYSTEM_PROMPT, stream_generate
+from settings import get_settings
 from encryptor import Encryptor
 from pipeline_config import PipelineConfig
 from access_policy import AccessPolicy, DocACL, User, get_default_policy
 from doc_identity import compute_doc_id
 from doc_registry import DocumentRegistry
+
+log = logging.getLogger("mindsearch.pipeline")
 
 
 @dataclass
@@ -199,7 +205,16 @@ class RAGPipeline:
 
     # ---------- generation ----------
 
+    def fit_to_window(self, query, context, history=None):
+        """The context items that fit the model window next to the system prompt, the chat history, the question and the answer."""
+        cfg = get_settings()
+        budget = context_budget(cfg.model_max_len, cfg.answer_max_tokens, SYSTEM_PROMPT, history, query)
+        kept, dropped = fit_context(context, budget)
+        if dropped:
+            log.warning("context trimmed to fit the model window: %d of %d items dropped (budget %d tokens)", dropped, len(context), budget)
+        return kept
+
     async def stream_answer(self, query, context, history=None):
-        ctx = "\n\n".join(context)
+        ctx = "\n\n".join(self.fit_to_window(query, context, history))
         async for token in stream_generate(self.config.generator_model, query, ctx, history):
             yield token

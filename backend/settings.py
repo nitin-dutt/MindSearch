@@ -83,6 +83,8 @@ class Settings:
     torch_threads: int            # TORCH_THREADS: 0 = CPU cores divided by retrieval_workers
     rewrite_enabled: bool         # REWRITE_ENABLED: follow-up question rewriting
     rewrite_timeout_s: float      # REWRITE_TIMEOUT_S
+    model_max_len: int            # MODEL_MAX_LEN: the context window the language model is served with (match vLLM --max-model-len)
+    answer_max_tokens: int        # ANSWER_MAX_TOKENS: longest answer the model may write; the prompt budget leaves room for it
     history_max_messages: int     # HISTORY_MAX_MESSAGES: what the rewriter sees
     history_generation_messages: int  # HISTORY_GENERATION_MESSAGES: what the answer writer sees
     history_token_budget: int     # HISTORY_TOKEN_BUDGET
@@ -134,6 +136,8 @@ class Settings:
             torch_threads=_int(env, "TORCH_THREADS", 0),
             rewrite_enabled=_str(env, "REWRITE_ENABLED", "1") == "1",
             rewrite_timeout_s=_float(env, "REWRITE_TIMEOUT_S", 6.0),
+            model_max_len=_int(env, "MODEL_MAX_LEN", 8192),
+            answer_max_tokens=_int(env, "ANSWER_MAX_TOKENS", 1024),
             history_max_messages=_int(env, "HISTORY_MAX_MESSAGES", 6),
             history_generation_messages=_int(env, "HISTORY_GENERATION_MESSAGES", 4),
             history_token_budget=_int(env, "HISTORY_TOKEN_BUDGET", 700),
@@ -153,6 +157,8 @@ class Settings:
         for name in ("retrieval_workers", "max_upload_mb", "kg_extract_num_ctx", "history_token_budget"):
             if getattr(self, name) < 1:
                 raise ConfigError(f"{name.upper()} must be at least 1")
+        if self.model_max_len < self.answer_max_tokens + 1024:
+            raise ConfigError("MODEL_MAX_LEN must leave at least 1024 tokens of room for the prompt beyond ANSWER_MAX_TOKENS")
         for name in ("history_max_messages", "history_generation_messages", "history_per_message_chars", "torch_threads",
                      "kg_extract_workers"):
             if getattr(self, name) < 0:

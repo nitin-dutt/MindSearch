@@ -296,3 +296,31 @@ def test_deleting_twice_is_harmless(pipeline_factory, corpus_file):
     rag.delete_document(info["doc_id"])
     again = rag.delete_document(info["doc_id"])
     assert again["chunks_deleted"] == 0 and _count(rag) == 0
+
+
+# ------------------------------------------------------ the prompt fits the model window (GEN-05)
+
+def test_stream_answer_trims_the_context_to_the_model_window(pipeline_factory, monkeypatch):
+    import asyncio
+
+    import budget
+    import rag_pipeline
+
+    captured = {}
+
+    async def fake_generate(model, query, context, history=None):
+        captured["context"] = context
+        yield "ok"
+
+    monkeypatch.setattr(rag_pipeline, "stream_generate", fake_generate)
+    monkeypatch.setenv("MODEL_MAX_LEN", "4096")
+    monkeypatch.setenv("ANSWER_MAX_TOKENS", "1024")
+    rag = pipeline_factory()
+    items = [f"<doc>{'word ' * 800}</doc>" for _ in range(10)]            # about 1,300 estimated tokens each
+
+    async def run():
+        return [t async for t in rag.stream_answer("What is it?", items)]
+
+    assert asyncio.run(run()) == ["ok"]
+    assert 0 < len(captured["context"].split("\n\n")) < len(items)          # something was dropped, the best passage was kept
+    assert budget.estimate_tokens(captured["context"]) <= 4096 - 1024
