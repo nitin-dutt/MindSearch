@@ -13,7 +13,7 @@ def test_defaults_match_the_verified_stack():
     assert cfg.generator_model == "Qwen/Qwen2.5-7B-Instruct-AWQ"
     assert cfg.embedding_model == "all-MiniLM-L6-v2"
     assert cfg.reranker_model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    assert cfg.kg_extractor == "ollama" and cfg.pipeline_preset == "full_hybrid" and cfg.retrieval_workers == 4
+    assert cfg.kg_extractor == "ollama" and cfg.pipeline_preset == "hybrid_graph_chunks" and cfg.retrieval_workers == 4
     assert cfg.qdrant_location == "./qdrant_db"            # embedded folder when no server URL is set
 
 

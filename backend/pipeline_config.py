@@ -31,7 +31,11 @@ class PipelineConfig:
     final_k: int = 3               # max chunks kept after reranking
     rerank_margin: float = None    # None = always keep final_k. Else keep the best chunk plus others whose
                                    # cross-encoder score is within this many points of the best (dynamic context)
-    graph_k: int = 3               # graph facts kept after reranking
+    graph_k: int = 3               # graph facts kept after reranking (0 = no facts in the prompt)
+    graph_expand: bool = False     # graph-guided passage hops: also consider passages that share entities with the top ones
+    graph_seed_k: int = 3          # how many of the top passages seed the expansion
+    graph_chunk_pool: int = 15     # extra passages the expansion may add before the cross-encoder picks
+    graph_hub_limit: int = 12      # an entity found in more passages than this is too generic to follow
     # generation
     generator_model: str = _cfg.generator_model
 
@@ -56,9 +60,17 @@ PRESETS = {
     "hybrid_rerank": PipelineConfig(name="hybrid_rerank", use_reranker=True, use_graph=False, hybrid=True),
     "hybrid_rerank_dynamic": PipelineConfig(name="hybrid_rerank_dynamic", use_reranker=True, use_graph=False,
                                             hybrid=True, rerank_margin=4.0),
-    # Production default: hybrid retrieval + dynamic context + the knowledge graph. Retrieval measured on squad_dev_xl (RET-02);
-    # end-to-end answer quality of this exact combination is re-judged at the end of Phase 5.
-    "full_hybrid": PipelineConfig(name="full_hybrid", use_reranker=True, use_graph=True, hybrid=True, rerank_margin=4.0),
+    # Production default: hybrid retrieval + the knowledge graph, WITHOUT the dynamic cutoff. The cutoff (margin 4.0) was tuned on
+    # single-hop SQuAD and cuts the second supporting passage of multi-hop questions (HotpotQA both-passages-in-top-3: 0.700 -> 0.505).
+    # Multi-hop questions need more than one passage: the graph-aware preset sends 4 (cross-validated on HotpotQA: both supporting
+    # passages in the context 0.795 -> 0.880 compared with plain hybrid at the same 4 passages).
+    "hybrid_rerank_k4": PipelineConfig(name="hybrid_rerank_k4", use_reranker=True, use_graph=False, hybrid=True, final_k=4),
+    "hybrid_graph_chunks": PipelineConfig(name="hybrid_graph_chunks", use_reranker=True, use_graph=True, hybrid=True,
+                                          graph_expand=True, graph_k=0, final_k=4),
+    # With graph facts added to the prompt (measured on HotpotQA: no further gain over hybrid_graph_chunks, which is the default).
+    # No dynamic cutoff here: it was tuned on single-hop SQuAD and cuts the second hop (both passages in the top 3: 0.700 -> 0.505).
+    "full_hybrid": PipelineConfig(name="full_hybrid", use_reranker=True, use_graph=True, hybrid=True, graph_expand=True, final_k=4),
+    "hybrid_graph_facts": PipelineConfig(name="hybrid_graph_facts", use_reranker=True, use_graph=True, hybrid=True),
     "dense_rerank_fast": PipelineConfig(name="dense_rerank_fast", use_reranker=True, use_graph=False,
                                         candidate_k=10, rerank_margin=4.0),
 }

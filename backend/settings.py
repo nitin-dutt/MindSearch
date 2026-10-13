@@ -129,7 +129,7 @@ class Settings:
             kg_extract_workers=_int(env, "KG_EXTRACT_WORKERS", 0),
             celery_broker_url=_str(env, "CELERY_BROKER_URL", "redis://localhost:6379/0"),
             celery_result_backend=_str(env, "CELERY_RESULT_BACKEND", "redis://localhost:6379/0"),
-            pipeline_preset=_str(env, "PIPELINE_PRESET", "full_hybrid"),
+            pipeline_preset=_str(env, "PIPELINE_PRESET", "hybrid_graph_chunks"),
             retrieval_workers=_int(env, "RETRIEVAL_WORKERS", 4),
             torch_threads=_int(env, "TORCH_THREADS", 0),
             rewrite_enabled=_str(env, "REWRITE_ENABLED", "1") == "1",
