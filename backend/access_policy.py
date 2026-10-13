@@ -16,7 +16,6 @@ THE rule, implemented once in can_access() and compiled into both database filte
 Qdrant (vector search) and Neo4j (graph traversal) filters are generated from this one place, so the
 two stores cannot disagree. Missing ACL data is denied (secure default).
 """
-import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 

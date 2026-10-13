@@ -1,5 +1,4 @@
 from sentence_transformers import CrossEncoder
-import torch
 
 from settings import get_settings
 

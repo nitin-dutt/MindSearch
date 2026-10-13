@@ -76,7 +76,6 @@ def grid(rows):
 
 def latency(rag, rows, n=60):
     """Time the cross-encoder on the first n questions for different candidate counts / settings."""
-    import torch
     model = rag.reranker.model
 
     def timed(k, label):

@@ -2,8 +2,8 @@ import streamlit as st
 import requests
 import json
 import time
-from datetime import datetime, timedelta
-from typing import List, Tuple
+from datetime import datetime
+from typing import Tuple
 import uuid
 import html
 from streamlit_local_storage import LocalStorage
@@ -178,7 +178,7 @@ def send_message(message: str, stream: bool = True) -> Tuple[str, float]:
 
     except requests.exceptions.Timeout:
         elapsed = time.perf_counter() - start_time
-        return f"Error: Request timeout. The backend took too long to respond.", elapsed
+        return "Error: Request timeout. The backend took too long to respond.", elapsed
     except requests.exceptions.ConnectionError:
         elapsed = time.perf_counter() - start_time
         return f"Error: Unable to connect to RAG API. Make sure the backend is running on {API_BASE_URL}", elapsed

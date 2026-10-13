@@ -320,7 +320,7 @@ def test_failure_to_queue_the_job_marks_the_document_failed_and_returns_503(env,
 def test_listing_shows_only_what_the_user_may_read_with_live_status(env):
     root, staff, mgr = env.login("root"), env.login("staff"), env.login("mgr")
     open_doc = upload(env, root, name="canteen.txt", data=b"canteen", level="Staff")
-    mgr_doc = upload(env, root, name="board.txt", data=b"board memo", level="Manager")
+    upload(env, root, name="board.txt", data=b"board memo", level="Manager")
     env.registry.set_status(doc_id_of(open_doc), "done", chunks=4)
 
     staff_docs = env.client.get("/v1/documents", headers=staff).json()["documents"]
