@@ -106,7 +106,9 @@ def build_graph(rag, corpus_path):
         rag.kg_builder.extractor, os.path.join(EVAL_INDEX_DIR, "kg_cache", f"{cfg.collection}.jsonl"))
     chunks = run_chunking(corpus_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap)
     t0 = time.time()
-    stats = rag.ingest_graph(chunks, EVAL_ACL)
+    from doc_identity import compute_doc_id
+    # the graph must use the same document id as the vector index: it is how a graph hit finds its passage
+    stats = rag.ingest_graph(chunks, EVAL_ACL, doc_id=compute_doc_id(corpus_path, EVAL_ACL))
     graph = graph_stats(rag, build_seconds=round(time.time() - t0, 1))
     graph["extraction"] = stats.to_dict()
     if graph["entities"] == 0 or graph["relations"] == 0:
@@ -142,6 +144,7 @@ def retrieve_all(rag, items):
             "context_words": sum(len(c.split()) for c in res.to_context()),
             "graph_facts": [r["chunk"] for r in res.graph_facts],
             "graph_pool_size": len(res.graph_pool),
+            "graph_chunks_added": res.graph_chunks_added,
             "timings_ms": {k: round(v, 2) for k, v in res.timings_ms.items()},
             "final_covers": [sorted(s) for s in M.coverage(final_texts, gold)],
         }
