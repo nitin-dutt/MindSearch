@@ -112,7 +112,7 @@ MindSearch/
 │   ├── prepare_large_dataset.py, prepare_hotpot_dataset.py   # Build the SQuAD and HotpotQA evaluation sets
 │   ├── evaluation/                 # generate, judge, report, metrics, retrieval_bench, hop_tune, graph_diagnose, calibration, results/
 │   ├── loadtest/                   # Concurrency load test and its results
-│   ├── tests/                      # 329 automated test cases (access control, auth, API, encryption, graph, metrics)
+│   ├── tests/                      # 343 automated test cases (access control, auth, API, encryption, graph, metrics)
 │   ├── requirements*.txt, constraints.txt, .coveragerc, Dockerfile   # Pinned dependencies, full lock, coverage config
 │
 └── frontend/
@@ -126,10 +126,10 @@ MindSearch/
 ## How It Works (End-to-End Pipeline)
 
 ### 1. Asynchronous Ingestion & Graph ETL
-1. **Semantic Chunking (`chunker.py`):** Ingested documents (PDF, DOCX, TXT) are split using a paragraph-aware strategy (`chunk_size=150` words, `overlap=20` words) that respects structural boundaries and prevents severed sentence fragments.
+1. **Chunking (`chunker.py`):** Ingested documents (PDF, DOCX, TXT, Markdown) are split into passages of about 150 words with 20 words of overlap. Hard-wrapped PDF lines are re-flowed into sentences (and line-end hyphenation is repaired), paragraphs longer than a passage are cut at sentence boundaries, and every PDF passage keeps its page range so sources can say "page 3". Before this, 6-8% of passages exceeded the embedding model's 256-token limit (their tails were never searchable); now 0.2% do. The benchmark corpora (one whole passage per line) are chunked exactly as before (all 12,081 chunks identical), so earlier results are unaffected. Scanned PDFs need OCR, which is not built.
 2. **At-Rest Encryption (`encryptor.py`):** Each plaintext chunk is encrypted with **AES-GCM 256-bit** authenticated encryption before disk persistence.
-3. **Dense Indexing (`embedder.py`):** Chunks are transformed into 384-dimensional dense vectors using `sentence-transformers/all-MiniLM-L6-v2`. Vectors and their encrypted ciphertext payloads are indexed into **Qdrant** alongside role metadata (`role="Employee"` or `role="Admin"`).
-4. **Knowledge Graph Extraction (`kg_builder.py`):** Subject-Verb-Object (SVO) relationships and named entities are extracted via Ollama/SpaCy and inserted into **Neo4j** as labeled nodes (`Entity`) and directional edges (`RELATION`).
+3. **Dense and keyword indexing (`embedder.py`, `sparse.py`):** Chunks become 384-dimensional dense vectors (`all-MiniLM-L6-v2`) and BM25-style keyword vectors. Both, the encrypted ciphertext and the document's access rule (level, groups, users) are stored in **Qdrant**.
+4. **Knowledge Graph Extraction (`kg_builder.py`):** Subject-relation-object facts are extracted by an LLM (Ollama or the vLLM model), named entities are also found directly in the text with spaCy, and everything is written to **Neo4j**: `Entity` nodes, relationship edges, and `MENTIONED_IN` links from each entity to the passages that mention it (plus passage titles as the "page" of an entity). Every edge carries the document's access rule.
 5. **Background Task Execution (`worker.py`):** FastAPI dispatches ingestion tasks directly to **Celery** via **Redis**, guaranteeing zero API request blocking or upload timeouts.
 
 ### 2. Hybrid GraphRAG Retrieval
@@ -377,7 +377,7 @@ Planned next steps (items marked *done in v2* have already shipped):
 - **Inline Visual Rendering:** Pass image source identifiers back to the chat UI to display original diagrams alongside text answers.
 
 ### Phase 4: CI/CD Quality Gates & Evaluation Pipelines
-- **CI (done in v2):** GitHub Actions runs lint, the full test suite against real Neo4j and Qdrant (87% coverage, floor 80%), a Docker build and a dependency audit on every push; Dependabot keeps pins fresh. **Remaining:**
+- **CI (done in v2):** GitHub Actions runs lint, the full test suite against real Neo4j and Qdrant (88% coverage, floor 80%), a Docker build and a dependency audit on every push; Dependabot keeps pins fresh. **Remaining:**
 - **Automated RAGAS Regression Tests:** Integrate evaluation runs into CI/CD pipelines to block releases if Answer Relevancy or Faithfulness degrades below established thresholds.
 - **Dedicated Judge LLMs (partly done in v2: the judge is a separate model run in a separate pass):** Decouple evaluation onto specialized grading models (e.g., `Prometheus-2` or `Patronus`) to prevent judge workloads from contending for serving VRAM.
 
@@ -424,7 +424,7 @@ Sign in at the UI with the user you created. This starts (infrastructure ports l
 - **Grafana:** `http://localhost:3000`
 
 ### Tests and CI
-Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. The suite measures 87% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. A dry run of these exact steps on a clean Linux container passed all 329 tests, and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
+Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. A dry run of these exact steps on a clean Linux container passed all 343 tests, and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
 ```bash
 ruff check .
 cd backend && python -m pytest tests -q --cov=. --cov-config=.coveragerc --cov-report=term
