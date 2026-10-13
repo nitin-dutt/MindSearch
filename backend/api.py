@@ -8,7 +8,6 @@ Security model (alignment_plan SEC-01, SEC-04, SEC-09):
   * Uploaded filenames are never used as paths; content is size- and signature-checked.
   * Logins are rate limited; logins, uploads, chats and denials are written to an audit log.
 """
-import asyncio
 import json
 import os
 import time

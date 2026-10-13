@@ -13,11 +13,11 @@ plaintext because they are needed for filtering and display.
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from qdrant_client.models import (Distance, FieldCondition, Filter, FilterSelector, MatchValue, PayloadSchemaType,
+from qdrant_client.models import (Distance, FieldCondition, Filter, MatchValue, PayloadSchemaType,
                                   PointStruct, VectorParams)
 
 from access_policy import DocACL

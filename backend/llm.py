@@ -1,6 +1,4 @@
-import asyncio
 from openai import AsyncOpenAI
-import os
 
 from settings import get_settings
 

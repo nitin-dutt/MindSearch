@@ -1,5 +1,4 @@
 import nltk
-from nltk.tokenize import sent_tokenize
 import os
 import chardet
 import pdfplumber

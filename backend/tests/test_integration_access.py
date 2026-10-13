@@ -139,7 +139,6 @@ def test_upload_directory_holds_no_plaintext_after_dispatch_is_asynchronous(stac
 
 
 def events_of(text):
-    import json
     return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ") and line != "data: [DONE]"]
 
 
