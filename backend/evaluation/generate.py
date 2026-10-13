@@ -162,7 +162,7 @@ def retrieve_all(rag, items):
 # -------------------------------------------------------------- generation
 
 async def generate_all(rag, records, concurrency):
-    from llm import LLM_ERROR_PREFIX
+    from llm import LLMError
     sem = asyncio.Semaphore(concurrency)
     done = 0
 
@@ -172,13 +172,16 @@ async def generate_all(rag, records, concurrency):
             rec.update(answer="", failed=False, no_context=True, gen_ms=None, ttft_ms=None)
         else:
             async with sem:
-                t0, first, parts = time.perf_counter(), None, []
-                async for tok in rag.stream_answer(rec["question"], rec["contexts"]):
-                    if first is None:
-                        first = time.perf_counter() - t0
-                    parts.append(tok)
+                t0, first, parts, errored = time.perf_counter(), None, [], False
+                try:
+                    async for tok in rag.stream_answer(rec["question"], rec["contexts"]):
+                        if first is None:
+                            first = time.perf_counter() - t0
+                        parts.append(tok)
+                except LLMError:
+                    errored = True
                 answer = "".join(parts)
-                rec.update(answer=answer, failed=answer.startswith(LLM_ERROR_PREFIX) or not answer.strip(),
+                rec.update(answer=answer, failed=errored or not answer.strip(),
                            no_context=False, gen_ms=round((time.perf_counter() - t0) * 1000, 1),
                            ttft_ms=round(first * 1000, 1) if first else None)
         if not rec["failed"] and not rec["no_context"]:

@@ -91,6 +91,7 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - RETRIEVAL_WORKERS=${RETRIEVAL_WORKERS:-4}
       - PIPELINE_PRESET=${PIPELINE_PRESET:-hybrid_graph_chunks}
+      - MODEL_MAX_LEN=${VLLM_MAX_LEN:-8192}      # same value vLLM is started with: the prompt budget is computed from it
       - GENERATOR_MODEL=${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}   # the model vLLM serves (see vllm_engine); one setting for both
       - TOKENIZERS_PARALLELISM=false
       - MINDSEARCH_DATA_KEY=${MINDSEARCH_DATA_KEY:?Set MINDSEARCH_DATA_KEY in .env}
@@ -146,6 +147,7 @@ services:
       - OLLAMA_HOST=http://host.docker.internal:11434
       # Graph extraction backend: ollama (14B on CPU, best accuracy, slow) or vllm (GPU, fast). See kg_extractors.py
       - KG_EXTRACTOR=${KG_EXTRACTOR:-ollama}
+      - MODEL_MAX_LEN=${VLLM_MAX_LEN:-8192}
       - GENERATOR_MODEL=${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}
     volumes:
       - ./backend/uploads:/app/uploads
