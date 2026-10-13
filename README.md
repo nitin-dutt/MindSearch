@@ -96,7 +96,7 @@ MindSearch/
 │
 ├── backend/
 │   ├── main.py, api.py             # uvicorn entry point; HTTP API: login, chat (SSE), ingest, documents, per-request authorization
-│   ├── settings.py                 # Central configuration: every model name, address and knob (33 settings, no secrets)
+│   ├── settings.py                 # Central configuration: every model name, address and knob (35 settings, no secrets)
 │   ├── auth.py, access_policy.py   # Signed tokens + scrypt; the one access rule compiled into Qdrant and Neo4j filters
 │   ├── org_policy.yaml, org_policies/   # Active policy and example policies (flat, hierarchy, departmental, matrix)
 │   ├── manage_users.py, uploads.py, ratelimit.py, audit.py   # Users CLI; safe uploads; login rate limiter; audit log
@@ -112,7 +112,7 @@ MindSearch/
 │   ├── prepare_large_dataset.py, prepare_hotpot_dataset.py   # Build the SQuAD and HotpotQA evaluation sets
 │   ├── evaluation/                 # generate, judge, report, metrics, retrieval_bench, hop_tune, graph_diagnose, calibration, results/
 │   ├── loadtest/                   # Concurrency load test and its results
-│   ├── tests/                      # 343 automated test cases (access control, auth, API, encryption, graph, metrics)
+│   ├── tests/                      # 355 automated test cases (access control, auth, API, encryption, graph, metrics)
 │   ├── requirements*.txt, constraints.txt, .coveragerc, Dockerfile   # Pinned dependencies, full lock, coverage config
 │
 └── frontend/
@@ -424,7 +424,7 @@ Sign in at the UI with the user you created. This starts (infrastructure ports l
 - **Grafana:** `http://localhost:3000`
 
 ### Tests and CI
-Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. A dry run of these exact steps on a clean Linux container passed all 343 tests, and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
+Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. A dry run of these exact steps on a clean Linux container passed all 355 tests, and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
 ```bash
 ruff check .
 cd backend && python -m pytest tests -q --cov=. --cov-config=.coveragerc --cov-report=term
@@ -509,6 +509,10 @@ Content-Type: application/json
   "session_id": "session-123"
 }
 ```
+
+**Failures are errors, not answers.** If the language model is unreachable the request fails with **HTTP 503** and a short message (no internals leaked); if it dies after it has started answering, the stream carries a separate `{"error": "..."}` event, sends no `sources`, and still ends with `[DONE]`. The UI shows this as a warning, never as the model's answer, and the evaluation harness counts it as a failed generation instead of scoring it.
+
+**The prompt always fits the model.** Before generation the retrieved passages are trimmed to the space left in the model's context window (`MODEL_MAX_LEN`, which must match vLLM's `--max-model-len`) after the system prompt, the chat history, the question and room for the answer (`ANSWER_MAX_TOKENS`). The lowest-ranked passages go first, the best one is truncated rather than lost, and a warning is logged when anything is dropped. Tokens are estimated at 3 characters each; measured against the real Qwen tokenizer on 300 real prompts a token averages 4.3 characters (worst case 3.3), and the estimate was never below the true count, so it errs toward dropping slightly too much. Not covered: text with unusually short tokens (code, numbers, other languages) could use more tokens than estimated.
 
 ### 4. Documents
 ```http
