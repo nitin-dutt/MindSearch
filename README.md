@@ -135,7 +135,7 @@ MindSearch/
 When a user submits a query:
 - **Hybrid Retrieval:** The query is matched two ways inside Qdrant: by meaning (dense embedding) and by exact words (a BM25-style keyword vector), and the two rankings are fused with Reciprocal Rank Fusion. Keywords catch names, identifiers and numbers that embeddings blur. A filter generated from the organization's access policy (user's level and groups vs. the document's minimum level and groups) is applied inside the Qdrant query, so unauthorized chunks are never returned. The same rule filters every hop of the Neo4j graph traversal.
 - **On-the-Fly Decryption:** Retrieved ciphertext chunks are decrypted in-memory into plaintext.
-- **Graph Expansion:** Query entities are identified, and Neo4j is queried for 1-hop and 2-hop contextual subgraphs connecting related concepts.
+- **Graph-guided passage hops:** The graph links every entity to the passages that mention it. Entities named in the question and entities found in the best passages (the bridge) lead to other passages, and a hop-aware ranker picks the final four. The same access rule filters every graph step and the passage fetch from Qdrant.
 
 ### 3. Cross-Encoder Noise Filtering
 Raw graph queries often retrieve true-but-tangential facts that degrade answer precision. MindSearch passes both the decrypted document chunks and the graph triples through a **Cross-Encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`)**:
@@ -247,6 +247,31 @@ With the dynamic cutoff on top (`hybrid_rerank_dynamic`) the same gain holds and
 
 **A stronger embedder was tested and rejected.** After hybrid search plus the reranker, e5-base-v2 and e5-small-v2 are statistically identical to MiniLM (difference +0.000, CI -0.007 to +0.007), while embedding about 6.5x (base) slower on CPU, so MiniLM stays. Costs: hybrid adds about 120 ms p50 retrieval latency in this single-process embedded benchmark, and the index stores one extra sparse vector per chunk.
 
+### Multi-hop retrieval (the graph's job)
+
+A single-hop question (SQuAD) needs one passage, so a graph cannot help; a multi-hop question needs two linked passages, and the second does not look like the question ("What is the school where the Wilmslow Show is held designated as?": the answer sits in the school's own page). Evaluated on HotpotQA (distractor setting, 2 supporting passages per question), with a pipeline that fails here when both are not in the context.
+
+**What the graph does.** At ingestion, every passage is linked to the entities it mentions (entities from LLM-extracted facts, named entities found directly in the text, and the passage's own leading title as the "page" of that entity). At query time the entities named in the question and those of the top passages (the bridge) lead to other passages; the cross-encoder score is combined with graph signals (how many question entities a passage covers; whether it is the page of a question entity or of a bridge entity) by a small logistic-regression ranker (`graph_ranker.py`, 5 weights, plain arithmetic at query time). Four passages are sent to the model instead of three.
+
+**Result on 100 held-out questions** (`hotpot_b`: never used to build, tune or choose anything; judge-free, paired bootstrap 95% CIs, `evaluation/results/hotpot_b__*`):
+
+| Pipeline | Both supporting passages in context | Answer contains gold |
+| :--- | :---: | :---: |
+| Dense + rerank, 3 passages (previous pipeline) | 0.730 | 0.630 |
+| Hybrid + rerank, 3 passages | 0.750 | 0.640 |
+| Hybrid + rerank, 4 passages (fair baseline) | 0.790 | 0.640 |
+| **Hybrid + graph-guided hops, 4 passages (default)** | **0.870** | **0.680** |
+
+Against the fair baseline at the same four passages: both-passages-in-context **+0.080 (CI +0.030 to +0.140)**, answer contains-gold **+0.040 (CI +0.010 to +0.080)**. Against the previous pipeline: **+0.140 (CI +0.080 to +0.210)** on retrieval; the answer gain (+0.050, CI -0.010 to +0.120) is positive but not conclusive. Putting the graph's facts (triples) into the prompt as well adds nothing, so the default sends passages only.
+
+**Honest limits.**
+- With perfect retrieval this generator reaches 0.81 answer contains-gold on this benchmark (`evaluation/oracle_ceiling.py`), so answer scores are capped well below retrieval scores; the gap from 0.68 to 0.81 is partly the model, partly the remaining retrieval misses.
+- The ranker's weights were fitted on a separate 200-question HotpotQA sample (5-fold cross-validated there: 0.700 to 0.765 at three passages, 0.795 to 0.880 at four). The numbers above are on fresh questions and agree with those estimates.
+- The "page" signal uses a passage's leading title, as encyclopedia-style corpora have. For documents without titles or headings it contributes nothing and the rest of the ranker still applies; this is untested on such documents.
+- It was a negative result first: an earlier graph (facts only, matched by substring) gave no gain at all (answer contains-gold 0.655 to 0.625). The fix came from stage-by-stage diagnosis (`evaluation/graph_diagnose.py`): the missing passage was usually already a candidate, and the problem was ranking, not finding.
+- A dynamic context cutoff tuned on single-hop SQuAD hurts multi-hop badly (both passages 0.700 to 0.505), so it is off in the multi-hop presets. For single-hop workloads use `hybrid_rerank_dynamic`.
+- Not yet measured: this graph pipeline on single-hop corpora; an independent-judge (RAGAS) score of the multi-hop answers.
+
 ### Follow-up questions (multi-turn chat)
 
 A follow-up like "what about its price?" means nothing to a search engine that cannot see the chat. The server rewrites it into a standalone question using the recent history ("What is the price of the Contoso acquisition?") and retrieves with that; the UI shows it as "Searched for: ...". Limits are enforced on the server: the rewriter sees at most the last 6 messages (3 turns) and the answer model the last 4 (2 turns), both capped at about 700 tokens, with old answers shortened to 600 characters (all configurable: `HISTORY_MAX_MESSAGES`, `HISTORY_GENERATION_MESSAGES`, `HISTORY_TOKEN_BUDGET`, `HISTORY_PER_MESSAGE_CHARS`). Client-supplied `system` messages are dropped, and history never affects access control.
@@ -277,7 +302,7 @@ A trivial `/healthz` endpoint is probed every 100 ms during each run. Its slowes
 What this does and does not show:
 - **Before the fix, throughput fell as users were added** (1.65 to 1.15 req/s) because every retrieval froze the server's event loop. Retrieval now runs in worker threads (`RETRIEVAL_WORKERS`, default 4), and the artificial 10 ms sleep per streamed token was removed.
 - **Median time-to-first-token is not always better with the thread pool alone** (for example 6.6 s vs 2.4 s at 20 users): the old server was unfair, letting some requests through quickly while others stalled for tens of seconds. Requests now wait in line. The tail (p95) is much better in every row.
-- **The remaining limit is CPU, not threads.** One retrieval already uses all cores, so more workers add little throughput; making each retrieval cheaper (the "fast" preset) is what raises it. That preset skips the knowledge graph, which showed no benefit on single-hop SQuAD. Select a preset with `PIPELINE_PRESET` (default `full_hybrid`: hybrid retrieval, dynamic cutoff and the graph).
+- **The remaining limit is CPU, not threads.** One retrieval already uses all cores, so more workers add little throughput; making each retrieval cheaper (the "fast" preset) is what raises it. That preset skips the knowledge graph, which showed no benefit on single-hop SQuAD. Select a preset with `PIPELINE_PRESET` (default `hybrid_graph_chunks`: hybrid retrieval plus graph-guided passage hops; see Multi-hop retrieval below). The load-test numbers above were measured with the dense presets.
 - **Ingestion is idempotent:** uploading the same document twice, or a task retry after a partial failure, overwrites instead of duplicating (deterministic document and chunk ids).
 
 ### Security & Encryption Latency
@@ -319,7 +344,7 @@ Every model name, service address, path and tuning knob is defined once in `back
 - **Exposure:** Redis, Neo4j and vLLM are bound to localhost; secrets live in `.env`.
 
 **What is NOT protected (stated plainly)**
-- Entity and relationship names in Neo4j are stored in plaintext (protected by access filters and Neo4j login, not encryption). Embeddings are not encrypted. The keyword index stores, per chunk, keyed hashes of its distinct words (the key is derived from the data key, so a stolen database cannot be matched against a word list), but it still reveals how many distinct terms a chunk has and which chunks share terms.
+- Entity names, relationship names and the entity-to-passage links in Neo4j are stored in plaintext (each link carries the document's access rule and is checked on every graph step) (protected by access filters and Neo4j login, not encryption). Embeddings are not encrypted. The keyword index stores, per chunk, keyed hashes of its distinct words (the key is derived from the data key, so a stolen database cannot be matched against a word list), but it still reveals how many distinct terms a chunk has and which chunks share terms.
 - There is no TLS in this repository: put a reverse proxy with HTTPS in front before exposing it beyond a trusted network.
 - A super role sees everything; its activity is audited, not blocked.
 - Hostile text inside a document the user is allowed to read can still mislead the model (prompt injection through permitted content).
