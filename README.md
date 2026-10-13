@@ -1,5 +1,7 @@
 # MindSearch: Enterprise Secure GraphRAG Platform with Local LLMs
 
+[![CI](https://github.com/nitin-dutt/MindSearch/actions/workflows/ci.yml/badge.svg)](https://github.com/nitin-dutt/MindSearch/actions/workflows/ci.yml)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://www.python.org/)
 [![vLLM](https://img.shields.io/badge/Engine-vLLM%20(AWQ)-purple.svg)](https://github.com/vllm-project/vllm)
@@ -418,6 +420,14 @@ Sign in at the UI with the user you created. This starts (infrastructure ports l
 - **vLLM Engine:** `http://localhost:8001`
 - **Prometheus:** `http://localhost:9090`
 - **Grafana:** `http://localhost:3000`
+
+### Tests and CI
+Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and an informational `pip-audit` of the pinned dependency lock. Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. The suite measures 87% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. A dry run of these exact steps on a clean Linux container passed all 329 tests, and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
+```bash
+ruff check .
+cd backend && python -m pytest tests -q --cov=. --cov-config=.coveragerc --cov-report=term
+```
+(inside the Compose stack: `docker compose -f docker-compose.yml -f docker-compose.eval.yml exec -T celery_worker python -m pytest tests -q`).
 
 ### 4. Local Development (Without Docker)
 ```bash
