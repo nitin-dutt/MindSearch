@@ -38,7 +38,7 @@ class SlowRag:
         from types import SimpleNamespace
         return SimpleNamespace(to_context=lambda: ["<doc>some context</doc>"], sources=lambda: [])
 
-    async def stream_answer(self, query, context, history=None):
+    async def stream_answer(self, query, context, history=None, today=None):
         for i in range(self.tokens):
             yield f"t{i} "
 

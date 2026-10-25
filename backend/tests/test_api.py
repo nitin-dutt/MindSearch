@@ -33,12 +33,19 @@ class FakeRag:
         self.asked_as, self.deleted, self.source_doc_id = [], [], None
         self.queries, self.histories = [], []
         self.fail = None                      # "start": the model is down; "mid": it dies after the first words
+        self.tokens = ("Hello ", "world")      # what the fake model says
+        self.second_source = False
+        self.empty_queries = set()            # searches for these exact questions find nothing usable
 
-    def retrieve(self, query, user):
+    def retrieve(self, query, user, doc_ids=None):
+        self.scopes = getattr(self, "scopes", []) + [doc_ids]
         self.asked_as.append(user)
         self.queries.append(query)
-        ctx = [f"<doc>visible to {user.id} (rank {user.rank})</doc>"] if self.context else []
-        srcs = [{"doc_id": self.source_doc_id, "chunk_index": 2}] if (self.context and self.source_doc_id) else []
+        found = self.context and query not in self.empty_queries
+        ctx = [f"<doc>visible to {user.id} (rank {user.rank})</doc>"] if found else []
+        srcs = [{"n": 1, "doc_id": self.source_doc_id, "chunk_index": 2, "page": None}] if (found and self.source_doc_id) else []
+        if srcs and self.second_source:
+            srcs.append({"n": 2, "doc_id": self.source_doc_id, "chunk_index": 5, "page": 3})
         return SimpleNamespace(to_context=lambda: ctx, sources=lambda: srcs)
 
     def delete_document(self, doc_id):
@@ -46,11 +53,12 @@ class FakeRag:
         self.registry.delete(doc_id)
         return {"chunks_deleted": 3}
 
-    async def stream_answer(self, query, context, history=None):
+    async def stream_answer(self, query, context, history=None, today=None):
+        self.today = today
         self.histories.append(history)
         if self.fail == "start":
             raise LLMError("down")
-        for tok in ("Hello ", "world"):
+        for tok in self.tokens:
             yield tok
             if self.fail == "mid":
                 raise LLMError("cut off")
@@ -165,6 +173,15 @@ def test_chat_with_nothing_retrievable_skips_the_llm(env):
 def test_chat_streams_tokens_when_context_exists(env):
     r = chat(env, env.login("staff"))
     assert r.status_code == 200 and "Hello " in r.text and r.text.strip().endswith("[DONE]")
+
+
+def test_chat_can_be_limited_to_chosen_documents_and_defaults_to_all(env):
+    chat(env, env.login("staff"))
+    r = env.client.post("/v1/chat/completions", json={**CHAT, "doc_ids": ["doc-a"]}, headers=env.login("staff"))
+    assert r.status_code == 200
+    assert env.rag.scopes == [None, ["doc-a"]]            # nothing chosen -> no scope; a chosen file -> exactly that file
+    too_many = env.client.post("/v1/chat/completions", json={**CHAT, "doc_ids": [str(i) for i in range(21)]}, headers=env.login("staff"))
+    assert too_many.status_code == 422
 
 
 def test_me_and_policy_describe_what_the_user_may_do(env):
@@ -367,6 +384,36 @@ def test_only_the_uploader_or_a_super_role_can_delete(env):
     assert env.client.get(f"/v1/documents/{d}", headers=owner).status_code == 404
 
 
+def test_a_higher_level_can_delete_what_a_lower_level_uploaded_but_not_the_reverse(env):
+    staff, mgr = env.login("staff"), env.login("mgr")
+    low = doc_id_of(upload(env, staff, data=b"staff upload", level="Staff"))
+    listed = env.client.get(f"/v1/documents/{low}", headers=mgr).json()
+    assert listed["can_delete"] is True and listed["uploaded_by"] == "staff"          # the manager sees it and who uploaded it
+    assert env.client.get(f"/v1/documents/{low}", headers=staff).json()["can_delete"] is True   # the uploader still can
+    assert env.client.delete(f"/v1/documents/{low}", headers=mgr).status_code == 200
+    high = doc_id_of(upload(env, mgr, data=b"manager upload", level="Staff", name="m.txt"))
+    seen = env.client.get(f"/v1/documents/{high}", headers=staff).json()
+    assert seen["can_delete"] is False and "uploaded_by" not in seen                   # a lower level cannot, and is not told who
+    assert env.client.delete(f"/v1/documents/{high}", headers=staff).status_code == 403
+    assert env.rag.deleted == [low]
+
+
+def test_an_administrators_upload_cannot_be_deleted_by_a_manager_even_if_the_admin_has_a_lower_level(env):
+    d = doc_id_of(upload(env, env.login("root"), data=b"admin upload", level="Staff"))      # root: a super role
+    mgr = env.login("mgr")
+    seen = env.client.get(f"/v1/documents/{d}", headers=mgr).json()
+    assert seen["can_delete"] is False and "uploaded_by" not in seen
+    assert env.client.delete(f"/v1/documents/{d}", headers=mgr).status_code == 403 and env.rag.deleted == []
+
+
+def test_an_uploader_that_no_longer_exists_can_only_be_overruled_by_a_super_role(env):
+    d = doc_id_of(upload(env, env.login("staff"), data=b"orphan"))
+    env.store._by_name.pop("staff")                                                    # the account was removed from users.yaml
+    mgr = env.login("mgr")
+    assert env.client.delete(f"/v1/documents/{d}", headers=mgr).status_code == 403
+    assert env.client.delete(f"/v1/documents/{d}", headers=env.login("root")).status_code == 200
+
+
 def test_a_super_role_can_delete_anyones_document(env):
     d = doc_id_of(upload(env, env.login("staff"), data=b"staff upload"))
     assert env.client.delete(f"/v1/documents/{d}", headers=env.login("root")).status_code == 200
@@ -385,7 +432,7 @@ def test_chat_ends_with_the_sources_it_used(env):
     r = chat(env, h)
     events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and line != "data: [DONE]"]
     sources = next(e["sources"] for e in events if "sources" in e)
-    assert sources == [{"doc_id": d, "chunk_index": 2, "filename": "handbook.txt"}]
+    assert sources == [{"n": 1, "doc_id": d, "chunk_index": 2, "page": None, "filename": "handbook.txt", "cited": False}]
     assert r.text.strip().endswith("[DONE]") and r.text.index("sources") > r.text.index("Hello")
 
 
@@ -410,7 +457,7 @@ class StubRewriter:
     def __init__(self, result="What is the price of the Contoso acquisition?"):
         self.result, self.calls = result, []
 
-    async def rewrite(self, history, question):
+    async def rewrite(self, history, question, force=False):
         self.calls.append((history, question))
         if not history:
             return question, False
@@ -444,10 +491,46 @@ def test_a_follow_up_is_searched_as_a_standalone_question(env):
     assert rewriter.calls[0][1] == "what about its price?"                           # the rewriter saw the user's own words
 
 
-def test_the_answer_writer_gets_the_recent_turns_and_the_standalone_question(env):
+class SelfContainedRewriter(StubRewriter):
+    """Like the real one: leaves a question that stands on its own alone, unless the retry forces a rewrite."""
+    async def rewrite(self, history, question, force=False):
+        self.calls.append((history, question, force))
+        return (self.result, True) if (force and history) else (question, False)
+
+
+DETAIL = convo(("user", "What is the refund policy?"), ("assistant", "It covers refunds [1]."), ("user", "give a detailed list"))
+
+
+def test_a_question_that_finds_nothing_is_retried_once_with_a_rewrite(env):
+    rewriter = SelfContainedRewriter("give a detailed list of the refund policy")
+    env.rag.empty_queries = {"give a detailed list"}
+    client, h = multi_turn_app(env, rewriter)
+    r = client.post("/v1/chat/completions", headers=h, json={"messages": DETAIL})
+    assert env.rag.queries == ["give a detailed list", "give a detailed list of the refund policy"]       # as typed first, then the rewrite
+    assert "Hello" in r.text and '"standalone_question": "give a detailed list of the refund policy"' in r.text
+
+
+def test_a_question_that_works_as_typed_is_not_retried(env):
+    rewriter = SelfContainedRewriter()
+    client, h = multi_turn_app(env, rewriter)
+    client.post("/v1/chat/completions", headers=h, json={"messages": DETAIL})
+    assert env.rag.queries == ["give a detailed list"] and all(call[2] is False for call in rewriter.calls)
+
+
+def test_if_the_retry_also_finds_nothing_the_original_no_context_answer_stands(env):
+    env.rag.empty_queries = {"give a detailed list", "give a detailed list of the refund policy"}
+    client, h = multi_turn_app(env, SelfContainedRewriter("give a detailed list of the refund policy"))
+    r = client.post("/v1/chat/completions", headers=h, json={"messages": DETAIL})
+    assert api.NO_CONTEXT_MESSAGE in r.text and "Hello" not in r.text and "standalone_question" not in r.text
+
+
+def test_the_answer_writer_gets_the_earlier_questions_but_not_its_own_earlier_answers(env):
     client, h = multi_turn_app(env, StubRewriter())
     client.post("/v1/chat/completions", headers=h, json={"messages": FOLLOW_UP})
-    assert env.rag.histories[0] == FOLLOW_UP[:2]
+    sent = env.rag.histories[0]
+    assert sent[0] == FOLLOW_UP[0]                                                   # the user's earlier question is kept
+    assert sent[1] == {"role": "assistant", "content": api.conv.EARLIER_ANSWER_STUB}   # the old answer is not (it could be copied or cut off)
+    assert "first of March" not in str(sent)
 
 
 def test_a_first_question_is_not_rewritten_and_has_no_event(env):
@@ -465,7 +548,7 @@ def test_long_conversations_are_trimmed_on_the_server(env):
         long += convo(("user", f"q{i}"), ("assistant", f"a{i}"))
     client.post("/v1/chat/completions", headers=h, json={"messages": long + convo(("user", "and the last one?"))})
     sent = env.rag.histories[0]
-    assert len(sent) <= 4 and sent[0]["role"] == "user" and sent[-1]["content"] == "a19"     # newest turns only
+    assert len(sent) <= 4 and sent[0]["role"] == "user" and sent[-1]["content"] == api.conv.EARLIER_ANSWER_STUB     # newest turns only
 
 
 def test_a_client_supplied_system_message_never_reaches_the_model(env):
@@ -523,3 +606,93 @@ def test_a_model_that_dies_mid_answer_sends_an_error_event_and_no_sources(env):
     assert any("choices" in e for e in events) and any("error" in e for e in events)    # the partial text, then the error
     assert not any("sources" in e for e in events)                                       # an interrupted answer cites nothing
     assert r.text.rstrip().endswith("data: [DONE]") and "cut off" not in r.text           # the stream still ends cleanly
+
+
+# ------------------------------------------------------------ citations and "I don't know" (GEN-02, GEN-03)
+
+def sources_event(r):
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and "[DONE]" not in line]
+    return next((e["sources"] for e in events if "sources" in e), None)
+
+
+def test_the_sources_event_marks_which_numbered_sources_the_answer_cited(env):
+    h = env.login("staff")
+    env.rag.source_doc_id, env.rag.second_source = doc_id_of(upload(env, h, name="report.txt", data=b"report")), True
+    env.rag.tokens = ("The permits renew in January ", "[2].")
+    sources = sources_event(chat(env, h))
+    assert [(s["n"], s["cited"], s["page"]) for s in sources] == [(1, False, None), (2, True, 3)]
+    assert all(s["filename"] == "report.txt" for s in sources)
+
+
+def test_a_citation_that_points_at_nothing_is_logged_and_marks_nothing(env):
+    h = env.login("staff")
+    env.rag.source_doc_id = doc_id_of(upload(env, h, name="report.txt", data=b"report"))
+    env.rag.tokens = ("An invented source [9].",)
+    sources = sources_event(chat(env, h))
+    assert [s["cited"] for s in sources] == [False]
+    assert any('"citation_invalid"' in line for line in open(env.audit_path, encoding="utf-8"))
+
+
+def test_an_i_dont_know_answer_cites_and_lists_no_sources(env):
+    h = env.login("staff")
+    env.rag.source_doc_id = doc_id_of(upload(env, h, name="report.txt", data=b"report"))
+    env.rag.tokens = (api.ABSTAIN_MESSAGE,)
+    r = chat(env, h)
+    assert api.ABSTAIN_MESSAGE.replace("'", "\u0027") in r.text or api.ABSTAIN_MESSAGE in r.text
+    assert sources_event(r) is None
+
+
+def test_the_refusal_gate_answers_without_calling_the_model(env):
+    env.rag.should_abstain = lambda result: True
+    r = chat(env, env.login("staff"))
+    assert r.status_code == 200 and api.ABSTAIN_MESSAGE in r.text and "Hello" not in r.text
+    assert env.rag.histories == []                                    # the language model was never asked
+    assert sources_event(r) is None
+    assert any('"chat_abstained"' in line for line in open(env.audit_path, encoding="utf-8"))
+
+
+# ------------------------------------------------------------ chat outcomes are counted (OBS-01)
+
+def outcome(name):
+    from prometheus_client import REGISTRY
+    return REGISTRY.get_sample_value("mindsearch_chat_requests_total", {"outcome": name}) or 0.0
+
+
+def test_every_way_a_chat_can_end_is_counted_once(env):
+    pytest.importorskip("prometheus_client")
+    h = env.login("staff")
+    names = ("answered", "abstained_model", "refused_gate", "no_context", "failed", "interrupted")
+    before = {n: outcome(n) for n in names}
+
+    chat(env, h)                                                    # answered
+    env.rag.tokens = (api.ABSTAIN_MESSAGE,)
+    chat(env, h)                                                    # the model said I don't know
+    env.rag.tokens = ("Hello ", "world")
+    env.rag.should_abstain = lambda result: True
+    chat(env, h)                                                    # the gate refused
+    del env.rag.should_abstain
+    env.rag.context = False
+    chat(env, h)                                                    # nothing retrievable
+    env.rag.context, env.rag.fail = True, "start"
+    chat(env, h)                                                    # the model is down
+    env.rag.fail = "mid"
+    chat(env, h)                                                    # the model died mid-answer
+
+    assert {n: outcome(n) - before[n] for n in names} == {n: 1.0 for n in names}
+
+
+def test_the_stage_and_first_token_histograms_are_filled_by_a_chat(env):
+    pytest.importorskip("prometheus_client")
+    from prometheus_client import REGISTRY
+    ttft = lambda: REGISTRY.get_sample_value("mindsearch_time_to_first_token_seconds_count") or 0.0   # noqa: E731
+    gen = lambda: REGISTRY.get_sample_value("mindsearch_stage_seconds_count", {"stage": "generation"}) or 0.0   # noqa: E731
+    t0, g0 = ttft(), gen()
+    chat(env, env.login("staff"))
+    assert ttft() == t0 + 1 and gen() == g0 + 1
+
+
+def test_live_chat_tells_the_model_todays_date(env):
+    """The model cannot know the date; without it an age or a 'how long ago' is worked out from a guessed year."""
+    import datetime
+    chat(env, env.login("staff"))
+    assert env.rag.today == datetime.date.today()

@@ -17,7 +17,7 @@ TEMPLATE_OVERHEAD = 48            # "Context: ... Question: ... Answer:" wrapper
 SAFETY_MARGIN = 64
 MIN_CONTEXT_TOKENS = 256          # never starve the context completely, whatever the history looks like
 
-_TAGGED = re.compile(r"^(<(\w+)>)(.*)(</\2>)$", re.S)
+_TAGGED = re.compile(r"^(<(\w+)(?:\s[^>]*)?>)(.*)(</\2>)$", re.S)
 
 
 def estimate_tokens(text: str) -> int:

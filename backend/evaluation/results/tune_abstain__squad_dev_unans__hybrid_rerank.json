@@ -1,0 +1,124 @@
+{
+  "dataset": "squad_dev_unans",
+  "config": "hybrid_rerank",
+  "n_answerable": 191,
+  "n_unanswerable": 209,
+  "median_best_score": {
+    "answerable": 5.414651870727539,
+    "unanswerable": -6.26846981048584
+  },
+  "auc": 0.9636263433452742,
+  "max_false_refusal": 0.05,
+  "curve": [
+    {
+      "threshold": -8.0,
+      "unanswerable_refused": 0.364,
+      "answerable_wrongly_refused": 0.0
+    },
+    {
+      "threshold": -7.0,
+      "unanswerable_refused": 0.469,
+      "answerable_wrongly_refused": 0.005
+    },
+    {
+      "threshold": -6.0,
+      "unanswerable_refused": 0.512,
+      "answerable_wrongly_refused": 0.01
+    },
+    {
+      "threshold": -5.0,
+      "unanswerable_refused": 0.617,
+      "answerable_wrongly_refused": 0.016
+    },
+    {
+      "threshold": -4.0,
+      "unanswerable_refused": 0.665,
+      "answerable_wrongly_refused": 0.016
+    },
+    {
+      "threshold": -3.0,
+      "unanswerable_refused": 0.699,
+      "answerable_wrongly_refused": 0.021
+    },
+    {
+      "threshold": -2.0,
+      "unanswerable_refused": 0.766,
+      "answerable_wrongly_refused": 0.037
+    },
+    {
+      "threshold": -1.0,
+      "unanswerable_refused": 0.852,
+      "answerable_wrongly_refused": 0.058
+    },
+    {
+      "threshold": 0.0,
+      "unanswerable_refused": 0.9,
+      "answerable_wrongly_refused": 0.094
+    },
+    {
+      "threshold": 1.0,
+      "unanswerable_refused": 0.938,
+      "answerable_wrongly_refused": 0.115
+    },
+    {
+      "threshold": 2.0,
+      "unanswerable_refused": 0.957,
+      "answerable_wrongly_refused": 0.157
+    },
+    {
+      "threshold": 3.0,
+      "unanswerable_refused": 0.971,
+      "answerable_wrongly_refused": 0.241
+    },
+    {
+      "threshold": 4.0,
+      "unanswerable_refused": 0.981,
+      "answerable_wrongly_refused": 0.33
+    },
+    {
+      "threshold": 5.0,
+      "unanswerable_refused": 0.986,
+      "answerable_wrongly_refused": 0.445
+    },
+    {
+      "threshold": 6.0,
+      "unanswerable_refused": 0.99,
+      "answerable_wrongly_refused": 0.56
+    },
+    {
+      "threshold": 7.0,
+      "unanswerable_refused": 0.995,
+      "answerable_wrongly_refused": 0.702
+    },
+    {
+      "threshold": 8.0,
+      "unanswerable_refused": 0.995,
+      "answerable_wrongly_refused": 0.838
+    }
+  ],
+  "split_half": {
+    "chosen on even, measured on odd": {
+      "threshold": -2.28,
+      "on_chosen_half": {
+        "unanswerable_refused": 0.709,
+        "answerable_wrongly_refused": 0.041
+      },
+      "on_other_half": {
+        "unanswerable_refused": 0.783,
+        "answerable_wrongly_refused": 0.021
+      }
+    },
+    "chosen on odd, measured on even": {
+      "threshold": -1.074,
+      "on_chosen_half": {
+        "unanswerable_refused": 0.868,
+        "answerable_wrongly_refused": 0.043
+      },
+      "on_other_half": {
+        "unanswerable_refused": 0.825,
+        "answerable_wrongly_refused": 0.052
+      }
+    }
+  },
+  "threshold_on_all": -1.074
+}

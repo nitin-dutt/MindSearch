@@ -33,6 +33,8 @@ class PipelineConfig:
     final_k: int = 3               # max chunks kept after reranking
     rerank_margin: float = None    # None = always keep final_k. Else keep the best chunk plus others whose
                                    # cross-encoder score is within this many points of the best (dynamic context)
+    abstain_below: float = None    # refuse without calling the model when the best passage's cross-encoder score is below this
+                                   # (None = never; tuned on the unanswerable benchmark, see README)
     graph_k: int = 3               # graph facts kept after reranking (0 = no facts in the prompt)
     graph_expand: bool = False     # graph-guided passage hops: also consider passages that share entities with the top ones
     graph_seed_k: int = 3          # how many of the top passages seed the expansion
@@ -67,11 +69,17 @@ PRESETS = {
     # Multi-hop questions need more than one passage: the graph-aware preset sends 4 (cross-validated on HotpotQA: both supporting
     # passages in the context 0.795 -> 0.880 compared with plain hybrid at the same 4 passages).
     "hybrid_rerank_k4": PipelineConfig(name="hybrid_rerank_k4", use_reranker=True, use_graph=False, hybrid=True, final_k=4),
+    # The production default also refuses ("I don't know") before calling the model when the best passage scores below -9.0 on the cross-encoder.
+    # It was -6.0 (chosen on the dev unanswerable set), but on real enterprise PDFs short questions such as "what is the package" score -8 to -9 even
+    # when the answer passage is retrieved, so -6.0 refused valid questions. Measured on the dev set: -6.0 refuses 90.0% of unanswerable at 2.1% wrong
+    # refusals, -9.0 refuses 86.1% at 1.0%, no cutoff 85.6% at 1.0% (the prompt does most of the refusing); see README. Other presets keep the gate OFF
+    # so the ablation results stay comparable.
     "hybrid_graph_chunks": PipelineConfig(name="hybrid_graph_chunks", use_reranker=True, use_graph=True, hybrid=True,
-                                          graph_expand=True, graph_k=0, final_k=4),
+                                          graph_expand=True, graph_k=0, final_k=4, abstain_below=-9.0),
     # With graph facts added to the prompt (measured on HotpotQA: no further gain over hybrid_graph_chunks, which is the default).
     # No dynamic cutoff here: it was tuned on single-hop SQuAD and cuts the second hop (both passages in the top 3: 0.700 -> 0.505).
-    "full_hybrid": PipelineConfig(name="full_hybrid", use_reranker=True, use_graph=True, hybrid=True, graph_expand=True, final_k=4),
+    "full_hybrid": PipelineConfig(name="full_hybrid", use_reranker=True, use_graph=True, hybrid=True, graph_expand=True, final_k=4,
+                                abstain_below=-9.0),
     "hybrid_graph_facts": PipelineConfig(name="hybrid_graph_facts", use_reranker=True, use_graph=True, hybrid=True),
     "dense_rerank_fast": PipelineConfig(name="dense_rerank_fast", use_reranker=True, use_graph=False,
                                         candidate_k=10, rerank_margin=4.0),

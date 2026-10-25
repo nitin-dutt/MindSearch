@@ -8,6 +8,8 @@ Security model (alignment_plan SEC-01, SEC-04, SEC-09):
   * Uploaded filenames are never used as paths; content is size- and signature-checked.
   * Logins are rate limited; logins, uploads, chats and denials are written to an audit log.
 """
+import datetime
+import functools
 import json
 import os
 import time
@@ -20,6 +22,8 @@ from pydantic import BaseModel, Field
 
 import auth
 import conversation as conv
+from answers import ABSTAIN_MESSAGE, is_abstention, mark_cited
+import metrics
 from llm import LLMError
 from settings import get_settings
 from access_policy import PolicyError, User, can_access
@@ -51,6 +55,8 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage] = Field(min_length=1, max_length=60)
     stream: bool = True
     session_id: Optional[str] = None
+    # Limit the search to these documents (the user picked a file). Access rules still apply on top: this can only narrow.
+    doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
 
 
 def _unauthorized(detail="Not authenticated"):
@@ -143,57 +149,107 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
         except conv.ConversationError as e:
             raise HTTPException(status_code=422, detail=str(e))
         history = conv.trim_history(history)
+        t_request = time.perf_counter()
         # A follow-up ("what about its price?") is rewritten into a standalone question; retrieval searches with that.
-        user_query, rewritten = await rewriter.rewrite(history, question)
+        with metrics.timed("rewrite"):
+            user_query, rewritten = await rewriter.rewrite(history, question)
         t0 = time.perf_counter()
-        result = await anyio.to_thread.run_sync(rag.retrieve, user_query, user, limiter=retrieval_limiter())
+        scope = {"doc_ids": req.doc_ids} if req.doc_ids else {}
+        gate = getattr(rag, "should_abstain", None)
+
+        async def search(q):
+            return await anyio.to_thread.run_sync(functools.partial(rag.retrieve, q, user, **scope), limiter=retrieval_limiter())
+
+        result = await search(user_query)
         context = result.to_context()
+        # A question that looked complete is searched as typed. If that finds nothing usable ("give a detailed list" means nothing without
+        # the chat) and there is history, rewrite it from the history and search once more, then use whichever search did better.
+        if history and not rewritten and (not context or (gate is not None and gate(result))):
+            retry_query, retry_changed = await rewriter.rewrite(history, question, force=True)
+            if retry_changed:
+                retry = await search(retry_query)
+                retry_ctx = retry.to_context()
+                helped = bool(retry_ctx) and not (gate is not None and gate(retry))
+                metrics.REWRITE_RETRIES.labels("helped" if helped else "no_help").inc()
+                if helped:
+                    user_query, rewritten, result, context = retry_query, True, retry, retry_ctx
         retrieval_ms = (time.perf_counter() - t0) * 1000
+        metrics.STAGE_SECONDS.labels("retrieve_total").observe(retrieval_ms / 1000)
         audit.log("chat", user=user.id, super_role=user.is_super, query=text_fingerprint(question),
-                  rewritten=rewritten, history_messages=len(history), context_items=len(context))
+                  rewritten=rewritten, history_messages=len(history), context_items=len(context),
+                  scoped_docs=len(req.doc_ids or []))
 
         # Nothing retrieved (empty index, or nothing this user may see): answer deterministically
         # without calling the LLM, so it can't answer from thin air.
         if not context:
+            metrics.chat_outcome("no_context")
+
             async def empty_stream():
                 yield f"data: {json.dumps({'choices': [{'delta': {'content': NO_CONTEXT_MESSAGE}}]})}\n\n"
                 yield "data: [DONE]\n\n"
             return StreamingResponse(empty_stream(), media_type="text/event-stream",
                                      headers={"X-Retrieval-Ms": f"{retrieval_ms:.0f}"})
 
-        # Which documents the answer is based on (filenames come from the registry; the chunk filter already
-        # guaranteed this user may read them).
+        # The refusal gate: something was retrieved, but the best passage is too weakly related to the question to answer from.
+        # Say so deterministically instead of letting the model improvise from loosely related text.
+        if gate is not None and gate(result):
+            audit.log("chat_abstained", user=user.id, reason="low_relevance")
+            metrics.chat_outcome("refused_gate")
+
+            async def abstain_stream():
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': ABSTAIN_MESSAGE}}]})}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(abstain_stream(), media_type="text/event-stream",
+                                     headers={"X-Retrieval-Ms": f"{retrieval_ms:.0f}"})
+
+        # The passages the model is shown, numbered like the citations in its answer (filenames come from the registry; the chunk
+        # filter already guaranteed this user may read them).
         sources = result.sources()
         if sources:
-            names = await anyio.to_thread.run_sync(rag.registry.filenames, [x["doc_id"] for x in sources])
+            names = await anyio.to_thread.run_sync(rag.registry.filenames, list({x["doc_id"] for x in sources}))
             sources = [{**x, "filename": names.get(x["doc_id"], "(unknown)")} for x in sources]
 
         # Ask for the first token BEFORE the response starts: if the model is down the client gets a real HTTP 503 instead of a
         # 200 stream whose "answer" is an error message.
-        answer = rag.stream_answer(user_query, context, conv.for_generation(history))
+        t_generation = time.perf_counter()
+        answer = rag.stream_answer(user_query, context, conv.for_generation(history), today=datetime.date.today())
         try:
             first = await answer.__anext__()
         except StopAsyncIteration:
             first = None
         except LLMError:
             audit.log("chat_failed", user=user.id, reason="language_model_unavailable")
+            metrics.chat_outcome("failed")
             raise HTTPException(status_code=503, detail="The answer service is unavailable. Please try again in a moment.")
+
+        metrics.TTFT_SECONDS.observe(time.perf_counter() - t_request)
 
         async def event_stream():
             if rewritten:
                 yield f"data: {json.dumps({'standalone_question': user_query})}\n\n"
-            failed = False
+            failed, parts = False, []
             try:
                 if first is not None:
+                    parts.append(first)
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': first}}]})}\n\n"
                 async for token in answer:
+                    parts.append(token)
                     yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
             except Exception as e:  # noqa: BLE001 - the stream has started, so the failure travels as an event
                 failed = True
                 audit.log("chat_failed", user=user.id, reason=type(e).__name__)
+                metrics.chat_outcome("interrupted")
                 yield f"data: {json.dumps({'error': 'The answer was interrupted. Please try again.'})}\n\n"
-            if sources and not failed:
-                yield f"data: {json.dumps({'sources': sources})}\n\n"
+            full = "".join(parts)
+            metrics.STAGE_SECONDS.labels("generation").observe(time.perf_counter() - t_generation)
+            if not failed:
+                metrics.chat_outcome("abstained_model" if is_abstention(full) else "answered")
+            if sources and not failed and not is_abstention(full):          # an 'I don't know' cites nothing
+                marked, info = mark_cited(sources, full)                      # `cited` = the [n] numbers the answer actually used
+                if info["invalid"]:
+                    audit.log("citation_invalid", user=user.id, numbers=info["invalid"])
+                    metrics.INVALID_CITATIONS.inc(len(info["invalid"]))
+                yield f"data: {json.dumps({'sources': marked})}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream",
@@ -261,28 +317,47 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
 
     DOC_ID = Path(..., pattern=r"^[0-9a-f]{32}$", description="document id")
 
+    def may_delete(user: User, entry) -> bool:
+        """Who can delete a document: a super role, the uploader, or someone of a HIGHER level than the uploader (a manager can remove
+        what an employee uploaded, never the other way round, and equals cannot remove each other's). The uploader's level is looked up
+        in the user store; an uploader who no longer exists, or who is a super role, can only be overruled by a super role."""
+        if user.is_super or entry.uploader == user.id:
+            return True
+        uploader = users.get(entry.uploader)
+        if uploader is None:
+            return False
+        if policy.make_user(uploader.username, uploader.level, uploader.groups, uploader.roles).is_super:
+            return False                          # an administrator's upload can only be removed by an administrator, whatever their level
+        return user.rank > policy.rank_of(uploader.level)
+
+    def public(entry, user: User) -> dict:
+        deletable = may_delete(user, entry)
+        out = entry.to_public(policy, include_uploader=deletable)       # people who may delete a document may see who uploaded it
+        out["can_delete"] = deletable
+        return out
+
     @app.get("/v1/documents")
     async def list_documents(user: User = Depends(current_user)):
         """Documents this user may read, newest first, with their processing status."""
         entries = await anyio.to_thread.run_sync(rag.registry.list, user)
-        return {"documents": [e.to_public(policy, include_uploader=user.is_super or e.uploader == user.id) for e in entries]}
+        return {"documents": [public(e, user) for e in entries]}
 
     @app.get("/v1/documents/{doc_id}")
     async def get_document(doc_id: str = DOC_ID, user: User = Depends(current_user)):
         entry = await anyio.to_thread.run_sync(rag.registry.get, doc_id, user)
         if entry is None:                          # missing and not-allowed look identical: existence is not leaked
             raise HTTPException(status_code=404, detail="Document not found")
-        return entry.to_public(policy, include_uploader=user.is_super or entry.uploader == user.id)
+        return public(entry, user)
 
     @app.delete("/v1/documents/{doc_id}")
     async def delete_document(doc_id: str = DOC_ID, user: User = Depends(current_user)):
-        """Remove a document everywhere (chunks, graph facts, registry entry). Allowed for the uploader or a super role."""
+        """Remove a document everywhere (chunks, graph facts, registry entry). Allowed for the uploader, a super role, or a higher level than the uploader."""
         entry = await anyio.to_thread.run_sync(rag.registry.get, doc_id, user)
         if entry is None:
             raise HTTPException(status_code=404, detail="Document not found")
-        if not (user.is_super or entry.uploader == user.id):
+        if not may_delete(user, entry):
             audit.log("document_delete_denied", user=user.id, doc_id=doc_id)
-            raise HTTPException(status_code=403, detail="Only the uploader or an administrator can delete a document.")
+            raise HTTPException(status_code=403, detail="Only the uploader, an administrator or someone of a higher level than the uploader can delete a document.")
         report = await anyio.to_thread.run_sync(rag.delete_document, doc_id)
         audit.log("document_delete", user=user.id, super_role=user.is_super, doc_id=doc_id)
         return {"status": "deleted", "doc_id": doc_id, **report}

@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("neo4j")
 
 from access_policy import AccessPolicy, DocACL, can_access  # noqa: E402
-from kg_builder import KnowledgeGraphBuilder  # noqa: E402
+from kg_builder import KnowledgeGraphBuilder, entity_key  # noqa: E402
 from kg_extractors import Triple  # noqa: E402
 
 PREFIX = "ZZTEST_"
@@ -175,3 +175,46 @@ def test_deleting_a_document_twice_is_harmless(kg):
     kg.delete_document(d)
     again = kg.delete_document(d)
     assert again == {"relationships": 0, "entities_removed": 0}
+
+
+def test_an_entity_mentioned_by_two_documents_survives_deleting_one_and_goes_with_the_last(kg):
+    """The passage-mention links (what retrieval uses to find an entity's passages) follow the same rule as the fact edges:
+    deleting one document removes ITS mentions only; the shared entity stays while any document still mentions it."""
+    d1, d2 = doc(), doc()
+    shared, only1 = PREFIX + "Shared Org", PREFIX + "Only In One"
+    kg.save_triples([], EVERYONE, d1, mentions=[(shared, 0, True), (only1, 0, False)])
+    kg.save_triples([], EVERYONE, d2, mentions=[(shared, 3, False)])
+
+    def entity_count(name):
+        with kg.driver.session() as s:
+            return s.run("MATCH (n:Entity {name:$n}) RETURN count(n) AS c", n=name).single()["c"]
+
+    def mentioned_in(doc_id):
+        with kg.driver.session() as s:
+            return s.run("MATCH (:Entity {name:$n})-[m:MENTIONED_IN {doc_id:$d}]->(:Document) RETURN count(m) AS c", n=shared, d=doc_id).single()["c"]
+
+    key = entity_key(shared)
+    assert set(kg.candidate_chunks([key], SUPER, 12)) == {(d1, 0), (d2, 3)}          # both passages are found through the entity
+
+    kg.delete_document(d1)
+    assert entity_count(shared) == 1 and entity_count(only1) == 0                    # shared kept, the entity only d1 used removed
+    assert mentioned_in(d1) == 0 and mentioned_in(d2) == 1                           # d1's mention gone, d2's untouched
+    assert set(kg.candidate_chunks([key], SUPER, 12)) == {(d2, 3)}                   # retrieval no longer points at the deleted document
+
+    kg.delete_document(d2)
+    assert entity_count(shared) == 0                                                  # the last document that mentioned it is gone
+    assert kg.candidate_chunks([key], SUPER, 12) == {}
+
+
+def test_a_document_node_records_when_it_was_first_saved_and_resaving_keeps_that_time(kg):
+    """Lets an operator find the newest upload in the Neo4j browser (ORDER BY d.created DESC); a retry must not move the time."""
+    d = doc()
+    kg.save_triples([T("W1", "USES", "W2")], EVERYONE, d)
+    with kg.driver.session() as s:
+        first = s.run("MATCH (n:Document {id:$i}) RETURN toString(n.created) AS t", i=d).single()["t"]
+    assert first
+    kg.save_triples([T("W1", "USES", "W3")], EVERYONE, d)
+    with kg.driver.session() as s:
+        again = s.run("MATCH (n:Document {id:$i}) RETURN toString(n.created) AS t", i=d).single()["t"]
+    assert again == first
+

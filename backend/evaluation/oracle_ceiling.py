@@ -12,7 +12,7 @@ import json
 
 from evaluation import metrics as M
 from evaluation.datasets import load_dataset
-from llm import SYSTEM_PROMPT, client
+from llm import client, get_system_prompt
 from settings import get_settings
 
 
@@ -32,7 +32,7 @@ async def main():
         async with sem:
             r = await client.chat.completions.create(
                 model=model, temperature=0.1, max_tokens=300,
-                messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                messages=[{"role": "system", "content": get_system_prompt()},
                           {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{item['question']}\n\nAnswer:"}])
         answer = r.choices[0].message.content or ""
         return {"contains": M.contains_gold(answer, item["ground_truth"]), "f1": M.token_f1(answer, item["ground_truth"]),

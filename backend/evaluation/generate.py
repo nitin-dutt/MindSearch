@@ -32,6 +32,7 @@ RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 EVAL_INDEX_DIR = os.path.join(BACKEND_DIR, "qdrant_eval")
 
 from access_policy import DocACL
+from answers import ABSTAIN_MESSAGE, extract_citations, is_abstention
 
 EVAL_ACL = DocACL(min_rank=0)  # evaluation documents are readable by everyone; queries run as the superuser
 MAX_KG_FAILURE_RATE = 0.25  # abort the run if more than this share of chunks fail extraction
@@ -134,12 +135,15 @@ def retrieve_all(rag, items):
     records = []
     for n, item in enumerate(items, start=1):
         gold = item["gold_passages"]
+        answerable = item.get("answerable", True)         # False: the answer passage was removed from the corpus (GEN-03 benchmark)
         res = rag.retrieve(item["question"], rag.policy.superuser())
         final_texts = [r["chunk"] for r in res.chunks]
 
         rec = {
             "id": item["id"], "question": item["question"], "ground_truth": item["ground_truth"],
-            "n_gold": len(gold), "type": item.get("type"),
+            "n_gold": len(gold), "type": item.get("type"), "answerable": answerable,
+            "n_passages": len(res.chunks), "top_relevance": res.top_relevance(),
+            "gated": bool(rag.should_abstain(res)),                # the refusal gate would answer "I don't know" without the model
             "contexts": res.to_context(),
             "n_context_items": len(res.chunks) + len(res.graph_facts),
             "context_words": sum(len(c.split()) for c in res.to_context()),
@@ -149,10 +153,11 @@ def retrieve_all(rag, items):
             "timings_ms": {k: round(v, 2) for k, v in res.timings_ms.items()},
             "final_covers": [sorted(s) for s in M.coverage(final_texts, gold)],
         }
-        for k, v in M.retrieval_metrics(final_texts, gold, ks=FINAL_KS).items():
-            rec[f"final_{k}"] = v
-        for k, v in M.retrieval_metrics(res.dense_pool, gold, ks=POOL_KS).items():
-            rec[f"pool_{k}"] = v
+        if answerable:                                         # retrieval metrics only make sense when the answer is in the corpus
+            for k, v in M.retrieval_metrics(final_texts, gold, ks=FINAL_KS).items():
+                rec[f"final_{k}"] = v
+            for k, v in M.retrieval_metrics(res.dense_pool, gold, ks=POOL_KS).items():
+                rec[f"pool_{k}"] = v
         records.append(rec)
         if n % 25 == 0 or n == len(items):
             print(f"  retrieved {n}/{len(items)}")
@@ -160,6 +165,19 @@ def retrieve_all(rag, items):
 
 
 # -------------------------------------------------------------- generation
+
+def annotate_answer(rec):
+    """Abstention and citation facts about one finished answer (judge-free).
+    abstained: the answer is "I don't know" (said by the model or the gate; an empty retrieval counts as a refusal too).
+    cited / invalid: numbers the answer cites that exist / do not exist among the passages it was shown.
+    cited_correct: how many of the valid citations point at a passage that really contains the gold answer passage."""
+    rec["abstained"] = bool(rec.get("no_context") or rec.get("gated") or is_abstention(rec.get("answer", "")))
+    rec["abstained_n"] = 1.0 if rec["abstained"] else 0.0
+    info = extract_citations(rec.get("answer", ""), rec.get("n_passages", 0))
+    covers = rec.get("final_covers", [])
+    rec["cited"], rec["invalid_citations"] = info["cited"], len(info["invalid"])
+    rec["cited_correct"] = sum(1 for n in info["cited"] if n <= len(covers) and covers[n - 1])
+
 
 async def generate_all(rag, records, concurrency):
     from llm import LLMError
@@ -170,6 +188,8 @@ async def generate_all(rag, records, concurrency):
         nonlocal done
         if not rec["contexts"]:
             rec.update(answer="", failed=False, no_context=True, gen_ms=None, ttft_ms=None)
+        elif rec.get("gated"):                                  # refused by the gate: the model is never called
+            rec.update(answer=ABSTAIN_MESSAGE, failed=False, no_context=False, gen_ms=None, ttft_ms=None)
         else:
             async with sem:
                 t0, first, parts, errored = time.perf_counter(), None, [], False
@@ -184,7 +204,8 @@ async def generate_all(rag, records, concurrency):
                 rec.update(answer=answer, failed=errored or not answer.strip(),
                            no_context=False, gen_ms=round((time.perf_counter() - t0) * 1000, 1),
                            ttft_ms=round(first * 1000, 1) if first else None)
-        if not rec["failed"] and not rec["no_context"]:
+        annotate_answer(rec)
+        if not rec["failed"] and not rec["no_context"] and rec.get("answerable", True):
             rec.update({f"ans_{k}": v for k, v in M.answer_metrics(rec["answer"], rec["ground_truth"]).items()})
         done += 1
         if done % 25 == 0 or done == len(records):
@@ -196,13 +217,14 @@ async def generate_all(rag, records, concurrency):
 # ----------------------------------------------------------------- summary
 
 def summarize_run(records, generated):
-    keys = sorted({k for r in records for k in r if k.startswith(("final_", "pool_"))
+    answerable = [r for r in records if r.get("answerable", True)]
+    keys = sorted({k for r in answerable for k in r if k.startswith(("final_", "pool_"))
                    and isinstance(r[k], (int, float)) and not isinstance(r[k], bool)})
-    summary = {"n_questions": len(records), "retrieval": M.summarize(records, keys)}
-    if any(r.get("n_gold", 0) > 1 for r in records):
+    summary = {"n_questions": len(records), "n_answerable": len(answerable), "retrieval": M.summarize(answerable, keys) if answerable else {}}
+    if any(r.get("n_gold", 0) > 1 for r in answerable):
         summary["by_type"] = {}
-        for t in sorted({r["type"] for r in records if r.get("type")}):
-            sub = [r for r in records if r.get("type") == t]
+        for t in sorted({r["type"] for r in answerable if r.get("type")}):
+            sub = [r for r in answerable if r.get("type") == t]
             summary["by_type"][t] = {"n": len(sub), **M.summarize(sub, [k for k in keys if "recall@" in k or "full_support@" in k])}
 
     summary["context"] = {"avg_items": sum(r["n_context_items"] for r in records) / len(records),
@@ -215,19 +237,50 @@ def summarize_run(records, generated):
     summary["latency_ms"] = {"retrieval_p50": M.percentile(total_ms, 0.5), "retrieval_p95": M.percentile(total_ms, 0.95)}
 
     if generated:
-        scored = [r for r in records if not r["failed"] and not r["no_context"]]
+        scored = [r for r in answerable if not r["failed"] and not r["no_context"]]
+        timed = [r for r in scored if r["ttft_ms"] is not None]
         summary["generation"] = {
             "n_failed": sum(1 for r in records if r["failed"]),
             "n_no_context": sum(1 for r in records if r["no_context"]),
             "answers": M.summarize(scored, ["ans_exact_match", "ans_contains_gold", "ans_token_f1", "ans_token_recall"]),
-            "ttft_ms_p50": M.percentile([r["ttft_ms"] for r in scored], 0.5),
-            "gen_ms_p50": M.percentile([r["gen_ms"] for r in scored], 0.5),
+            "ttft_ms_p50": M.percentile([r["ttft_ms"] for r in timed], 0.5) if timed else None,
+            "gen_ms_p50": M.percentile([r["gen_ms"] for r in timed], 0.5) if timed else None,
         }
+        summary.update(abstention_and_citations(records))
     return summary
+
+
+def abstention_and_citations(records):
+    """"I don't know" quality (needs unanswerable questions) and citation quality (needs answers that cite), both judge-free."""
+    out = {}
+    done = [r for r in records if not r["failed"]]
+    unans = [r for r in done if not r.get("answerable", True)]
+    ans = [r for r in done if r.get("answerable", True)]
+    if unans:
+        out["abstention"] = {
+            "n_unanswerable": len(unans), "n_answerable": len(ans),
+            "abstain_rate_on_unanswerable": M.summarize(unans, ["abstained_n"])["abstained_n"],      # higher is better
+            "false_refusal_rate_on_answerable": M.summarize(ans, ["abstained_n"])["abstained_n"] if ans else None,   # lower is better
+            "answered_by_gate_share": sum(1 for r in unans if r.get("gated")) / len(unans),
+        }
+    cited_rows = [r for r in ans if not r["abstained"]]
+    if cited_rows:
+        for r in cited_rows:
+            r["has_citation_n"] = 1.0 if r["cited"] else 0.0
+        total_cited = sum(len(r["cited"]) for r in cited_rows)
+        out["citations"] = {
+            "n_answers": len(cited_rows),
+            "answers_with_a_valid_citation": M.summarize(cited_rows, ["has_citation_n"])["has_citation_n"],
+            "invalid_citation_numbers": sum(r["invalid_citations"] for r in cited_rows),
+            "citation_precision": (sum(r["cited_correct"] for r in cited_rows) / total_cited) if total_cited else None,
+        }
+    return out
 
 
 def print_summary(summary, config_name, dataset):
     r = summary["retrieval"]
+    if not r:
+        r = {}
 
     def fmt(key):
         s = r.get(key)
@@ -247,6 +300,18 @@ def print_summary(summary, config_name, dataset):
     print(f"Graph: {g['questions_with_graph_facts']:.0%} of questions got >=1 graph fact "
           f"({g['questions_with_raw_graph_pool']:.0%} had a non-empty raw pool)")
     print(f"Retrieval latency p50/p95: {summary['latency_ms']['retrieval_p50']:.0f} / {summary['latency_ms']['retrieval_p95']:.0f} ms")
+    if "abstention" in summary:
+        ab = summary["abstention"]
+        r1, r2 = ab["abstain_rate_on_unanswerable"], ab["false_refusal_rate_on_answerable"]
+        print(f"Abstention: says 'I don't know' on {r1['mean']:.3f} [{r1['ci_low']:.3f}, {r1['ci_high']:.3f}] of {ab['n_unanswerable']} unanswerable questions"
+              + (f"; wrongly refuses {r2['mean']:.3f} [{r2['ci_low']:.3f}, {r2['ci_high']:.3f}] of {ab['n_answerable']} answerable ones" if r2 else "")
+              + f"; the gate alone caught {ab['answered_by_gate_share']:.0%} of the unanswerable")
+    if "citations" in summary:
+        c = summary["citations"]
+        cp = c["citation_precision"]
+        print(f"Citations: {c['answers_with_a_valid_citation']['mean']:.3f} of {c['n_answers']} answers cite a valid passage"
+              + (f"; {cp:.3f} of cited passages really hold the answer passage" if cp is not None else "")
+              + f"; {c['invalid_citation_numbers']} invalid citation numbers")
     if "generation" in summary:
         a = summary["generation"]["answers"]
         print(f"Answers: contains-gold {a['ans_contains_gold']['mean']:.3f}  token-recall {a['ans_token_recall']['mean']:.3f}  "
@@ -284,14 +349,20 @@ def main():
     ap.add_argument("--concurrency", type=int, default=4, help="parallel LLM requests")
     ap.add_argument("--no-generate", action="store_true", help="retrieval metrics only; no LLM calls")
     ap.add_argument("--rebuild-index", action="store_true")
+    ap.add_argument("--prompt-profile", choices=["enterprise", "enterprise_v3", "benchmark"], help="system prompt (default: the PROMPT_PROFILE setting)")
+    ap.add_argument("--abstain-below", type=float, help="refusal gate: say \"I don't know\" when the best passage scores below this")
     ap.add_argument("--reset-graph", action="store_true",
                     help="REQUIRED for graph configs: WIPES ALL Neo4j DATA and rebuilds the graph from the corpus")
     ap.add_argument("--tag", default="", help="suffix for the run directory name")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
 
+    if args.prompt_profile:
+        os.environ["PROMPT_PROFILE"] = args.prompt_profile
     cfg = get_preset(args.config)
     overrides = {k: v for k, v in (("candidate_k", args.candidate_k), ("final_k", args.final_k)) if v}
+    if args.abstain_below is not None:
+        overrides["abstain_below"] = args.abstain_below
     if overrides:
         cfg = cfg.with_overrides(**overrides)
     if cfg.use_graph and not args.reset_graph:
@@ -317,7 +388,7 @@ def main():
     print_summary(summary, cfg.name, args.dataset)
 
     from embedder import EMBEDDING_MODEL_NAME
-    from llm import SYSTEM_PROMPT
+    from llm import get_system_prompt
     from settings import get_settings
     from reranker import RERANKER_MODEL_NAME
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -330,7 +401,7 @@ def main():
         "config": cfg.to_dict(), "queried_as": "superuser", "generated": generated,
         "models": {"embedder": EMBEDDING_MODEL_NAME, "reranker": RERANKER_MODEL_NAME if cfg.use_reranker else None,
                    "generator": cfg.generator_model if generated else None},
-        "system_prompt_sha": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:12],
+        "system_prompt_sha": hashlib.sha256(get_system_prompt().encode()).hexdigest()[:12],
         "index": {**index_info, "n_chunks": n_chunks}, "graph": graph,
         "git": git_info(), "versions": library_versions(), "command": " ".join(sys.argv),
         "settings": get_settings().describe(),     # every model name / URL / knob in effect (settings.py; contains no secrets)
