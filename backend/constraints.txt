@@ -2,7 +2,7 @@
 # so it only fixes versions and never installs anything by itself. Regenerate from a working worker container with:
 #   docker compose exec -T celery_worker pip freeze | grep -v -E '^(en_core_web_sm|pytest|pluggy|iniconfig)' > backend/constraints.txt
 aiohappyeyeballs==2.7.1
-aiohttp==3.14.3
+aiohttp==3.14.4
 aiosignal==1.4.0
 altair==6.3.0
 amqp==5.4.0
@@ -15,7 +15,7 @@ billiard==4.3.0
 blis==1.3.3
 catalogue==2.0.10
 celery==5.6.3
-certifi==2026.7.22
+certifi==2026.10.19
 cffi==2.1.1
 chardet==7.6.0
 charset-normalizer==3.5.1
@@ -39,7 +39,7 @@ diskcache==5.6.3
 distro==1.9.0
 docstring_parser==0.18.0
 fastapi==0.141.1
-filelock==4.0.1
+filelock==4.2.1
 frozenlist==1.8.0
 fsspec==2026.6.0
 greenlet==3.5.6
@@ -118,7 +118,7 @@ packaging==26.3
 pandas==3.0.6
 pdfminer.six==20260107
 pdfplumber==0.11.10
-pillow==12.3.0
+pillow==13.0.0
 portalocker==3.2.0
 preshed==3.0.13
 prometheus-fastapi-instrumentator==8.1.0
@@ -155,7 +155,7 @@ scikit-learn==1.9.1
 scikit-network==0.33.5
 scipy==1.18.1
 sentence-transformers==6.1.0
-setuptools==84.0.0
+setuptools==84.1.0
 shellingham==1.5.4
 six==1.17.0
 smart_open==8.0.1
