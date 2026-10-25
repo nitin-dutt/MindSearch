@@ -84,7 +84,7 @@ jobs:
         run: python -m pytest tests -q -p no:cacheprovider --cov=. --cov-config=.coveragerc --cov-report=term --cov-report=xml --cov-fail-under=80
       - name: Keep the coverage report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-xml
           path: backend/coverage.xml
