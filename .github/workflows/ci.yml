@@ -29,8 +29,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install ruff==0.17.0
@@ -61,8 +61,8 @@ jobs:
       QDRANT_URL: http://localhost:6333
       TOKENIZERS_PARALLELISM: "false"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -75,7 +75,7 @@ jobs:
           pip install -r backend/requirements.txt -c backend/constraints.txt pytest pytest-cov
           pip install "${SPACY_MODEL_URL}"
       - name: Cache downloaded models
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
           key: hf-models-${{ hashFiles('backend/settings.py') }}
@@ -84,7 +84,7 @@ jobs:
         run: python -m pytest tests -q -p no:cacheprovider --cov=. --cov-config=.coveragerc --cov-report=term --cov-report=xml --cov-fail-under=80
       - name: Keep the coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-xml
           path: backend/coverage.xml
@@ -97,8 +97,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Validate the compose file
         run: |
           NEO4J_PASSWORD=x MINDSEARCH_JWT_SECRET=x MINDSEARCH_DATA_KEY=x docker compose config -q
@@ -130,8 +130,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit
