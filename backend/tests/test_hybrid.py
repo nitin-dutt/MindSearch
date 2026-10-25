@@ -113,6 +113,21 @@ def test_the_access_filter_applies_to_the_keyword_branch_too(make, tmp_path):
     assert any("Bluebird" in c["chunk"] for c in rag.retrieve("Bluebird acquisition price", MANAGER).chunks)
 
 
+def test_a_search_can_be_limited_to_one_document_and_never_widens_access(make, tmp_path):
+    a = write(tmp_path, "a.md", "The cafeteria opens at eight in the morning.\n")
+    b = write(tmp_path, "b.md", "The cafeteria menu changes every Monday.\n")
+    secret = write(tmp_path, "s.md", "The cafeteria budget is a secret forty thousand.\n")
+    rag = make("hybrid_rerank")
+    id_a = rag.ingest_document(a, EVERYONE)["doc_id"]
+    rag.ingest_document(b, EVERYONE)
+    id_s = rag.ingest_document(secret, POLICY.make_acl("Manager"))["doc_id"]
+    q = "cafeteria"
+    assert {c["doc_id"] for c in rag.retrieve(q, EMPLOYEE).chunks} != {id_a}          # unscoped: several documents
+    assert {c["doc_id"] for c in rag.retrieve(q, EMPLOYEE, doc_ids=[id_a]).chunks} == {id_a}
+    assert rag.retrieve(q, EMPLOYEE, doc_ids=[id_s]).chunks == []                      # naming a restricted file finds nothing
+    assert {c["doc_id"] for c in rag.retrieve(q, MANAGER, doc_ids=[id_s]).chunks} == {id_s}
+
+
 def test_hybrid_and_dense_agree_when_the_question_has_no_keywords(make, tmp_path):
     f = write(tmp_path, "d.md", "The Eiffel Tower is located in Paris.\n")
     rag = make("hybrid_rerank")

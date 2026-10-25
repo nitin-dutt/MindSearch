@@ -41,7 +41,7 @@ QUESTIONS = {"hr": "What are the salary bands for a senior engineer?",
 
 class EchoRag(RAGPipeline):
     """Real retrieval; the 'LLM' just returns the context so the test can inspect it."""
-    async def stream_answer(self, query, context, history=None):
+    async def stream_answer(self, query, context, history=None, today=None):
         yield "\n".join(context)
 
 

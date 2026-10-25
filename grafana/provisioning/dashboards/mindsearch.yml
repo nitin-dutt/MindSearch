@@ -1,0 +1,10 @@
+# Tells Grafana to load every dashboard JSON found in /var/lib/grafana/dashboards (mounted from grafana/dashboards).
+apiVersion: 1
+providers:
+  - name: MindSearch
+    folder: MindSearch
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

@@ -8,6 +8,7 @@ from collections import defaultdict
 from neo4j import GraphDatabase
 
 from access_policy import AccessPolicy, DocACL, User
+from metrics import KG_CHUNKS_FAILED
 from settings import get_settings
 from kg_extractors import extract_chunks, make_extractor_from_env
 
@@ -92,6 +93,7 @@ class KnowledgeGraphBuilder:
         triples, stats = extract_chunks(self.extractor, chunks, workers=workers, mentions_out=mentions)
         mentions = self._mention_rows(chunks, mentions)
         log.info("KG extraction finished: %s", stats.to_dict())
+        KG_CHUNKS_FAILED.inc(stats.chunks_failed)
         if triples or mentions:
             # the id must be the SAME document id the vector index uses: it is how a graph hit finds its passage
             self.save_triples(triples, acl, doc_id or str(uuid.uuid4()), mentions=mentions)
@@ -147,6 +149,7 @@ class KnowledgeGraphBuilder:
         def write(tx):
             tx.run("""
                 MERGE (d:Document {id: $doc_id})
+                ON CREATE SET d.created = datetime()
                 SET d.min_rank = $min_rank, d.groups = $groups, d.users = $users
                 """, doc_id=doc_id, **acl_props)
             tx.run("""

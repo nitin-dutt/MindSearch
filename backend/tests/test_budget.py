@@ -60,3 +60,9 @@ def test_the_assembled_prompt_never_exceeds_the_window():
     total = (B.estimate_tokens(SYSTEM) + sum(B.estimate_tokens(m["content"]) + B.PER_MESSAGE_OVERHEAD for m in history)
              + B.estimate_tokens(question) + sum(B.estimate_tokens(k) + 2 for k in kept) + answer)
     assert dropped > 0 and total <= window
+
+
+def test_a_numbered_passage_is_truncated_without_losing_its_tags():
+    numbered = '<doc id="3">' + "x" * 9000 + "</doc>"
+    kept, _ = B.fit_context([numbered], budget_tokens=200)
+    assert kept[0].startswith('<doc id="3">') and kept[0].endswith("</doc>") and B.estimate_tokens(kept[0]) <= 200

@@ -71,6 +71,12 @@ def test_zero_messages_means_no_history():
     assert C.trim_history(turns(3), max_messages=0) == []
 
 
+def test_for_generation_hides_earlier_answers_but_keeps_earlier_questions():
+    out = C.for_generation([{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a long earlier answer " * 40}])
+    assert out[0] == {"role": "user", "content": "q1"}
+    assert out[1] == {"role": "assistant", "content": C.EARLIER_ANSWER_STUB}
+
+
 def test_the_answer_writer_sees_a_smaller_slice_than_the_rewriter(monkeypatch):
     assert len(C.for_generation(turns(5))) == C.GENERATION_HISTORY_MESSAGES <= C.MAX_HISTORY_MESSAGES
 
@@ -116,6 +122,25 @@ def test_a_follow_up_is_rewritten_using_the_history():
     out = run(rewriter_with(complete).rewrite(turns(1), "what about its price?"))
     assert out == ("What is the price of the Contoso acquisition?", True)
     assert "question 0" in seen["prompt"] and "what about its price?" in seen["prompt"]
+
+
+@pytest.mark.parametrize("question", [
+    "what is the refund policy for premium customers?",         # the regression: a self-contained question picked up an earlier, unrelated topic
+    "what is the refund policy",
+    "Summarise the leave policy for contractors.",
+])
+def test_a_question_that_stands_on_its_own_is_never_rewritten(question):
+    async def complete(*a, **k):
+        raise AssertionError("must not be called")
+
+    assert run(rewriter_with(complete).rewrite(turns(2), question)) == (question, False)
+
+
+@pytest.mark.parametrize("question", [
+    "what about its price?", "and the manager?", "How many days?", "Who approves them for the team?", "why is that so expensive today",
+])
+def test_questions_that_point_back_are_still_rewritten(question):
+    assert C.refers_back(question)
 
 
 def test_an_unchanged_question_is_reported_as_not_rewritten():

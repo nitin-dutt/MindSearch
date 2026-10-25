@@ -112,7 +112,7 @@ MindSearch/
 │   ├── prepare_large_dataset.py, prepare_hotpot_dataset.py   # Build the SQuAD and HotpotQA evaluation sets
 │   ├── evaluation/                 # generate, judge, report, metrics, retrieval_bench, hop_tune, graph_diagnose, calibration, results/
 │   ├── loadtest/                   # Concurrency load test and its results
-│   ├── tests/                      # 355 automated test cases (access control, auth, API, encryption, graph, metrics)
+│   ├── tests/                      # 406 automated test cases (access control, auth, API, encryption, graph, metrics)
 │   ├── requirements*.txt, constraints.txt, .coveragerc, Dockerfile   # Pinned dependencies, full lock, coverage config
 │
 └── frontend/
@@ -147,15 +147,15 @@ Raw graph queries often retrieve true-but-tangential facts that degrade answer p
 The filtered context is structured using explicit XML boundary tags:
 ```xml
 Context:
-<doc>Document passage 1...</doc>
-<doc>Document passage 2...</doc>
+<doc id="1">Document passage 1...</doc>
+<doc id="2">Document passage 2...</doc>
 <kg_fact>EntityA -> RELATION -> EntityB</kg_fact>
 
 Question:
 What are the requirements for deployment?
 ```
 - **Inference Server:** Prompt is dispatched to **vLLM** serving `Qwen/Qwen2.5-7B-Instruct-AWQ` at `temperature=0.1`.
-- **System Instructions:** Strictly constrains responses to the delimited context, preventing preamble filler and grounding every claim directly to the source passages.
+- **System Instructions:** The production prompt confines the model to the numbered passages, asks it to cite them as `[1]`, `[2]`, to combine several documents when a question needs it, and to answer with one fixed "I don't know" sentence when the documents do not contain the answer (see Citations and "I don't know" below). The original 1-2 sentence prompt is kept as the `benchmark` profile so earlier results stay reproducible.
 - **Streaming:** Tokens stream back in real-time via Server-Sent Events (SSE).
 
 ---
@@ -275,6 +275,54 @@ Against the fair baseline at the same four passages: both-passages-in-context **
 - A dynamic context cutoff tuned on single-hop SQuAD hurts multi-hop badly (both passages 0.700 to 0.505), so it is off in the multi-hop presets. For single-hop workloads use `hybrid_rerank_dynamic`.
 - Not yet measured: this graph pipeline on single-hop corpora; an independent-judge (RAGAS) score of the multi-hop answers.
 
+### Citations and "I don't know"
+
+An answer you cannot check, or a confident answer to a question the documents never address, is worse than no answer. Two mechanisms address that, both measured.
+
+**Citations.** Every passage in the prompt is numbered (`<doc id="2">`), the model is told to cite the passages it used as `[2]`, and the chat stream's final `sources` event lists them with their number, file name and PDF page; the `cited` flag marks the ones the answer actually used. The server reads the `[n]` markers back out of the answer and checks that each number exists (an invented `[9]` is logged and not trusted). An answer that says "I don't know" lists no sources.
+
+**"I don't know", in two layers.** (1) The prompt instructs the model to reply with one exact sentence when the combined documents do not contain what is needed. (2) A refusal *gate* runs before the model is called: if the best passage's cross-encoder score is below -9.0, the system answers "I don't know" itself (it was -6.0 until 2026-10-22; see the note under the table). The gate is on in the default preset (`hybrid_graph_chunks`) and off in the benchmark presets, so ablations stay comparable.
+
+**How it was measured.** A benchmark of unanswerable questions was built from SQuAD (`prepare_unanswerable.py`): for about half of the answer passages, the passage is removed from the index while related passages (same article) stay, so a system that answers from loosely related text is caught. The gate's threshold was chosen on the dev version (`squad_dev_unans`; rule: refuse as many unanswerable questions as possible while wrongly refusing at most 5% of valid ones; the best passage's score separates the two groups with AUC 0.964), the prompt was revised once on dev and multi-hop tuning data, and the numbers below are from a **fresh set of 200 questions (98 unanswerable, 102 answerable) that played no part in any decision** (`squad_unans_b`). Judge-free, 95% bootstrap CIs.
+
+| 200 fresh questions | Old prompt (no way to refuse) | New prompt | New prompt + gate at -6.0 | New prompt + gate at -9.0 (default) |
+| :--- | :---: | :---: | :---: | :---: |
+| Says "I don't know" when it should (98 unanswerable) | **0.0%** (answered all 98: every answer made up) | **89.8%** (83.7-94.9) | **92.9%** (86.7-96.9) | **89.8%** (83.7-94.9) |
+| Wrongly refuses a valid question (102) | 0.0% | 3.9% (1.0-7.8) | 4.9% (1.0-9.8) | 4.9% (1.0-9.8) |
+| Non-refused answers that cite a valid passage | n/a | 100% | 100% |
+| Cited passages that really contain the answer passage | n/a | 91.3% | 89.5% |
+| Answer correct (contains-gold) on answerable | 0.843 | 0.804 | 0.804 |
+
+At -6.0 the gate alone refused 57% of the unanswerable questions (56 of 98) without calling the model at all, and refused none of the valid ones; at -9.0 it refuses 33% on its own and the model's own "I don't know" does the rest.
+
+**Why the cutoff moved from -6.0 to -9.0 (2026-10-22).** In real use on a job-description PDF, a short question ("what is the package") was refused although the passage with the answer had been retrieved: the cross-encoder scored the best passage -8.8, while clearly off-topic questions scored about -11, so -6.0 (tuned on Wikipedia-style SQuAD text) was too strict there. Measured on the dev set (400 questions) with the same prompt: -6.0 refuses 90.0% of unanswerable questions and wrongly refuses 2.1% of valid ones; -9.0 refuses 86.1% and wrongly refuses 1.0%; with no cutoff at all 85.6% and 1.0% (the prompt does most of the refusing). On the fresh set above the false-refusal rate is the same at both cutoffs (4.9%) and the refusal rate is 3 points lower at -9.0, a difference inside the confidence intervals. HotpotQA answers were unchanged (contains-gold 0.62 at -6.0, 0.61 at -9.0). So -9.0 trades a little refusal strength for fewer wrongly refused short questions on real documents; it was chosen for that case and has no benchmark of real enterprise documents behind it yet. When the new system does answer, it is right as often as before (0.837 vs 0.843), and the drop in overall accuracy (-0.039, CI -0.088 to +0.010) is not statistically significant: it is the price of refusing instead of guessing.
+
+**Honest limits.**
+- **Multi-hop costs more.** On the 100 held-out HotpotQA questions the new prompt plus gate refuses 12; in 10 of those both needed passages were in the context, so about 10% of valid multi-hop questions are wrongly refused (the gate itself refused none). The first prompt version refused 21% and was revised to tell the model to combine documents. Answer accuracy moves 0.680 to 0.650 (-0.030, CI -0.090 to +0.030, not significant). Part of that drop is the model no longer guessing: when a needed passage was missing from the context, the old prompt was right only 31% of the time.
+- Citation checks catch invented numbers, not subtle misattribution (a real number on a wrong sentence); about one in ten cited passages did not contain the answer passage.
+- The gate's threshold was calibrated on SQuAD-style text with this cross-encoder; a different corpus or reranker needs it re-tuned (`python -m evaluation.tune_abstain`). Detection of "I don't know" is deliberately strict (the exact sentence, or an answer starting with "I don't know").
+- The unanswerable questions are constructed (answer passage removed), not written by people to look answerable as in SQuAD 2.0, so real-world refusal quality may differ.
+
+### Observability
+
+The API (`/metrics`), the ingestion worker (port 9100) and vLLM are scraped by Prometheus every 5 seconds, and Grafana starts with the data source and the **MindSearch overview** dashboard already loaded (`grafana/provisioning`, `grafana/dashboards`; no clicking). Open `http://localhost:3000` (user `admin`, password from `GRAFANA_ADMIN_PASSWORD`, default `admin`; the port is bound to this machine only).
+
+![MindSearch Grafana dashboard under load](docs/images/grafana-overview.jpg)
+
+What the pipeline metrics (`backend/metrics.py`) record:
+
+| Metric | What it tells you |
+| :--- | :--- |
+| `mindsearch_stage_seconds{stage}` | Time in each stage of a chat request: `rewrite`, `embed_query`, `vector_search`, `decrypt`, `rerank`, `graph`, `retrieve_total`, `generation` |
+| `mindsearch_time_to_first_token_seconds` | From the request arriving to the first word being ready |
+| `mindsearch_chat_requests_total{outcome}` | How requests end: `answered`, `abstained_model`, `refused_gate`, `no_context`, `failed` (HTTP 503), `interrupted` |
+| `mindsearch_decrypt_failures_total`, `mindsearch_invalid_citations_total` | Integrity and citation problems (should stay at 0) |
+| `mindsearch_ingest_documents_total{status}`, `..._chunks_total`, `..._seconds`, `mindsearch_kg_chunks_failed_total` | Worker: documents done / failed / retried, chunks written, time per document, graph extraction failures |
+
+Labels are a small fixed set (never a user, query or document id), so the number of time series cannot grow with traffic and nothing sensitive leaks into metrics. `python grafana/build_dashboard.py` regenerates the dashboard JSON from one-line panel definitions.
+
+**What it showed on the first real run** (default preset, 1 to 10 concurrent simulated users, one machine): the model and the vector search are not the bottleneck. Averaged over the run, a request spent about 0.14 s embedding the question, 0.03 s in the vector search, 3.3 s in the cross-encoder re-ranking and 5.2 s in the graph stage (which re-ranks the larger candidate pool a second time), against about 4.2 s generating the answer. Time to first token was 1.7 s with one user, 8.9 s with five and 24 s with ten. **So the default (graph-aware, 4-passage) preset is much slower under load than the dense presets measured in the Concurrency section above;** the likely fixes (re-rank once instead of twice, a smaller candidate pool, more CPU workers) are not done yet. This was an observability check, not a benchmark: no controlled before/after was run.
+
 ### Follow-up questions (multi-turn chat)
 
 A follow-up like "what about its price?" means nothing to a search engine that cannot see the chat. The server rewrites it into a standalone question using the recent history ("What is the price of the Contoso acquisition?") and retrieves with that; the UI shows it as "Searched for: ...". Limits are enforced on the server: the rewriter sees at most the last 6 messages (3 turns) and the answer model the last 4 (2 turns), both capped at about 700 tokens, with old answers shortened to 600 characters (all configurable: `HISTORY_MAX_MESSAGES`, `HISTORY_GENERATION_MESSAGES`, `HISTORY_TOKEN_BUDGET`, `HISTORY_PER_MESSAGE_CHARS`). Client-supplied `system` messages are dropped, and history never affects access control.
@@ -324,12 +372,12 @@ Hardware: AMD Ryzen 9 8940HX, Python 3.11.7, Windows 11. Encryption cost is negl
 
 ## Key Outcomes
 
-> **Status:** security claims are verified by automated tests, including attack tests; limits are listed under [Security Model and Limits](#security-model-and-limits). The multi-hop claim is now measured on a held-out set (see Multi-hop retrieval, with its limits). Observability claims are still being tightened: Prometheus HTTP metrics exist, but per-stage timings and provisioned Grafana dashboards do not.
+> **Status:** security claims are verified by automated tests, including attack tests; limits are listed under [Security Model and Limits](#security-model-and-limits). The multi-hop claim is now measured on a held-out set (see Multi-hop retrieval, with its limits). Observability is implemented and was verified live with real traffic (see Observability). Distributed tracing is not built.
 
 - 🛡️ **Policy-driven access control, verified:** one access rule (clearance levels + departments + super roles, defined per organization in `org_policy.yaml`) is compiled into both the Qdrant filter and the Neo4j filter. An exhaustive test checks every user against every document ACL for five organization structures and confirms both databases return exactly what the rule allows. Chunk text is AES-GCM-256 encrypted with a key kept outside the data, and ciphertext is bound to its record and ACL so database tampering cannot widen access. Limits (for example plaintext graph entity names, no built-in TLS) are listed under [Security Model and Limits](#security-model-and-limits).
 - ⚡ **Zero Token Costs & Complete Data Sovereignty:** 100% offline pipeline running on local NVIDIA GPUs. No confidential data ever leaves the on-premises perimeter.
 - 🧠 **Multi-hop retrieval via a knowledge graph:** both supporting passages reach the model for 87% of 100 held-out HotpotQA questions versus 73% for the previous dense pipeline (+14 points, 95% CI +8 to +21) and 79% for a hybrid baseline with the same four passages (+8 points, CI +3 to +14). Answer accuracy rises less (0.63 to 0.68; the model's ceiling with perfect passages is 0.81).
-- 📈 **Observability:** Prometheus instrumentator exposes HTTP latency and request counts; vLLM exposes its own metrics endpoint.
+- 📈 **Observability:** per-stage timings of every chat request (question embedding, vector search, decryption, re-ranking, graph hop, model), how each request ended (answered, refused, failed ...), ingestion counters, and an auto-provisioned Grafana dashboard; see [Observability](#observability).
 
 ---
 
@@ -424,7 +472,7 @@ Sign in at the UI with the user you created. This starts (infrastructure ports l
 - **Grafana:** `http://localhost:3000`
 
 ### Tests and CI
-Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. A dry run of these exact steps on a clean Linux container passed all 355 tests, and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
+Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. A dry run of these exact steps on a clean Linux container passed all 406 tests, and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
 ```bash
 ruff check .
 cd backend && python -m pytest tests -q --cov=. --cov-config=.coveragerc --cov-report=term
@@ -506,9 +554,11 @@ Content-Type: application/json
     {"role": "user", "content": "What were the primary revenue drivers in Q3?"}
   ],
   "stream": true,
-  "session_id": "session-123"
+  "session_id": "session-123",
+  "doc_ids": ["0c13..."]
 }
 ```
+`doc_ids` is optional: leave it out to search every document the user may read, or list up to 20 `doc_id`s to search only inside those (the file picker in the web UI). It can only narrow the search: the access rule is applied as well, so naming a document the user may not read finds nothing, not even a hint that it exists. The graph step is skipped for a scoped search, because graph hops can lead to passages of other documents.
 
 **Failures are errors, not answers.** If the language model is unreachable the request fails with **HTTP 503** and a short message (no internals leaked); if it dies after it has started answering, the stream carries a separate `{"error": "..."}` event, sends no `sources`, and still ends with `[DONE]`. The UI shows this as a warning, never as the model's answer, and the evaluation harness counts it as a failed generation instead of scoring it.
 
@@ -521,15 +571,15 @@ GET    /v1/documents/{doc_id}        # one document (404 if it does not exist OR
 DELETE /v1/documents/{doc_id}        # removes chunks, graph facts and the registry entry
 Authorization: Bearer <token>
 ```
-Each entry has `doc_id`, `filename`, `status` (`queued`, `processing`, `done` or `failed`), `chunks`, `level`, `groups`, `uploaded_at` and, for the uploader or an administrator, `uploaded_by`. Only the uploader or a super role can delete. Filenames and uploader names are stored encrypted. Deleting is idempotent and also removes graph entities no other document uses.
+Each entry has `doc_id`, `filename`, `status` (`queued`, `processing`, `done` or `failed`), `chunks`, `level`, `groups`, `uploaded_at` and, for whoever may delete the document, `uploaded_by`, and `can_delete` (the server's answer, so the UI never works the rule out itself). **Who can delete:** the uploader, an administrator (super role), or anyone of a **higher level than the uploader** (a manager can remove what an employee uploaded, never the other way round; equal levels cannot remove each other's; an uploader whose account no longer exists, or who is an administrator, can only be overruled by an administrator, whatever level the administrator has). Filenames and uploader names are stored encrypted. Deleting is idempotent and also removes graph entities no other document uses.
 
 **Conversation.** `messages` is the whole chat so far (newest last, up to 60). The server trims it and, for a follow-up, sends a first event `data: {"standalone_question": "..."}` showing what was actually searched for. A request whose last message is not from the user, or that is empty or oversized, gets HTTP 422.
 
-**Sources in chat.** The chat stream ends with one extra event before `[DONE]`, naming the documents the answer was based on:
+**Sources in chat.** The chat stream ends with one extra event before `[DONE]`, listing the numbered passages the model was shown (one entry per passage, in the numbering the answer cites):
 ```
-data: {"sources": [{"doc_id": "0c13...", "filename": "board_memo.txt", "chunk_index": 0}]}
+data: {"sources": [{"n": 1, "doc_id": "0c13...", "filename": "board_memo.pdf", "chunk_index": 4, "page": 3, "cited": true}]}
 ```
-`chunk_index` says which part of the document the text came from. This is the hook for showing the original document (and, later, page numbers and images) next to an answer.
+`n` is the citation number (`[1]` in the answer), `page` is the 1-based PDF page (null for other formats), and `cited` is true when the answer actually cites that passage. An "I don't know" answer, a refused question (gate) or an interrupted answer carries no `sources` event.
 
 ---
 

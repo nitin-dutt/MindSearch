@@ -59,17 +59,53 @@ def trim_history(history: List[dict], max_messages: int = None, token_budget: in
     return kept
 
 
+EARLIER_ANSWER_STUB = "(Earlier answer left out. Answer only from the documents given with the next question.)"
+
+
 def for_generation(history: List[dict]) -> List[dict]:
-    """The even smaller slice shown to the answer-writing model (the rewrite already carried the meaning forward)."""
-    return trim_history(history, max_messages=GENERATION_HISTORY_MESSAGES)
+    """The even smaller slice shown to the answer-writing model (the rewrite already carried the meaning forward).
+
+    The user's earlier questions are kept; the assistant's earlier ANSWERS are replaced by a stub. Shown in full (or cut short), an old
+    answer is something the model can copy or continue instead of reading the passages: "summarise it" then returned the earlier answer
+    cut off at the history length limit. Facts must come from the retrieved documents, not from the model's own earlier words."""
+    kept = trim_history(history, max_messages=GENERATION_HISTORY_MESSAGES)
+    return [m if m["role"] == "user" else {"role": m["role"], "content": EARLIER_ANSWER_STUB} for m in kept]
 
 
 REWRITE_SYSTEM = (
     "You rewrite a user's follow-up question so it can be understood without the earlier conversation. "
     "Replace pronouns and references (it, they, that, the first one, 'what about...') with the specific things they refer to. "
-    "Keep the user's meaning and wording as far as possible. Do not answer the question and do not add facts. "
-    "If the question already stands on its own, return it unchanged. Output only the rewritten question, nothing else."
+    "Change as little as possible: keep the user's own words and only insert the missing subject, as a short noun phrase taken from the "
+    "conversation. Do not paraphrase, do not add descriptive words the user did not use, do not list topics from the earlier answer. "
+    "Do not answer the question and do not add facts. "
+    "If the question already stands on its own, return it unchanged. Output only the rewritten question, nothing else.\n"
+    "Examples (the subjects are placeholders; use whatever the conversation is actually about):\n"
+    "Earlier topic: <topic A>. Follow-up: 'give in detail' -> 'give <topic A> in detail'\n"
+    "Earlier topic: <topic A>. Follow-up: 'what about its cost?' -> 'what is the cost of <topic A>?'\n"
+    "Earlier topic: <topic A>. Follow-up: 'and for <topic B>?' -> 'and what about <topic B>?'\n"
+    "Earlier topic: <topic A>. Follow-up: 'when does <topic C> start?' -> 'when does <topic C> start?' (already complete: unchanged)"
 )
+
+
+# Words that point back at the conversation. A question with none of them (and more than a few words) already stands on its own:
+# rewriting it can only add things the user did not ask about (a question about one document turned into one about an earlier topic).
+_BACK_REFERENCES = frozenset(
+    "it its they them their theirs this that those these he him his she her hers one ones former latter same also another "
+    "more else too and but so then instead other others previous above".split())
+_BACK_PHRASES = ("what about", "how about", "what else", "and what", "same for")
+SHORT_QUESTION_WORDS = 3
+
+
+def refers_back(question: str) -> bool:
+    """True when `question` probably cannot be understood without the earlier turns: it is very short, or it uses a pronoun or an
+    'and / what about' style opener. Only then is it worth rewriting."""
+    words = re.findall(r"[a-z0-9']+", question.lower())
+    if len(words) <= SHORT_QUESTION_WORDS:
+        return True
+    if any(w in _BACK_REFERENCES for w in words):
+        return True
+    text = " ".join(words)
+    return any(p in text for p in _BACK_PHRASES)
 
 
 def _transcript(history: List[dict]) -> str:
@@ -91,9 +127,10 @@ class QueryRewriter:
     def __init__(self, model, complete, enabled=True, timeout=REWRITE_TIMEOUT_S):
         self.model, self.complete, self.enabled, self.timeout = model, complete, enabled, timeout
 
-    async def rewrite(self, history: List[dict], question: str) -> Tuple[str, bool]:
-        """Returns (question to search with, whether it was changed)."""
-        if not self.enabled or not history:
+    async def rewrite(self, history: List[dict], question: str, force: bool = False) -> Tuple[str, bool]:
+        """Returns (question to search with, whether it was changed). Questions that stand on their own are left alone unless
+        `force` is set (the retry after a search as typed found nothing usable)."""
+        if not self.enabled or not history or not (force or refers_back(question)):
             return question, False
         messages = [{"role": "system", "content": REWRITE_SYSTEM},
                     {"role": "user", "content": f"Conversation so far:\n{_transcript(history)}\n\n"

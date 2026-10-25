@@ -1,7 +1,7 @@
 from sentence_transformers import SentenceTransformer
 from qdrant_client.models import (VectorParams, Distance, PointStruct, PayloadSchemaType, Filter,
                                   FieldCondition, MatchValue, FilterSelector, SparseVectorParams, SparseVector,
-                                  Modifier, Prefetch, FusionQuery, Fusion, HasIdCondition)
+                                  Modifier, Prefetch, FusionQuery, Fusion, HasIdCondition, MatchAny)
 import atexit
 import uuid
 
@@ -9,6 +9,7 @@ from settings import get_settings
 
 from doc_identity import point_id as make_point_id
 from encryptor import record_aad
+from metrics import timed
 from sparse import SparseEncoder
 
 EMBEDDING_MODEL_NAME = get_settings().embedding_model     # EMBEDDING_MODEL (settings.py)
@@ -143,9 +144,23 @@ def _page_payload(pages, index):
     return {"page": first, **({"page_end": last} if last != first else {})}
 
 
+def _timed_query(client, **kwargs):
+    with timed("vector_search"):
+        return client.query_points(**kwargs)
+
+
+def scoped_filter(access, doc_ids):
+    """The access filter, narrowed to the chosen documents. Scoping can only remove results, never add them: the access
+    filter is always kept, so naming a document the user may not read just finds nothing."""
+    if not doc_ids:
+        return access
+    scope = FieldCondition(key="doc_id", match=MatchAny(any=list(doc_ids)))
+    return Filter(must=[scope] + ([access] if access is not None else []))
+
+
 def search_embeddings(query, user, policy, db_path=None, collection_name=None, k=5, hybrid=False, encryptor=None,
-                      hybrid_pool=HYBRID_POOL):
-    """Search restricted to what `user` may read. There is deliberately no default user.
+                      hybrid_pool=HYBRID_POOL, doc_ids=None):
+    """Search restricted to what `user` may read (and, when `doc_ids` is given, to those documents). There is deliberately no default user.
     Dense by default; with hybrid=True the dense and keyword rankings are fused (RRF) and `encryptor` is needed to
     build the keyed keyword query. The access filter is applied to BOTH branches.
     Returns (scores, encrypted payloads, associated data for decryption, source metadata), best first.
@@ -157,8 +172,9 @@ def search_embeddings(query, user, policy, db_path=None, collection_name=None, k
         return [], [], [], []
 
     _check_schema(client, db_path, collection_name)
-    q_vector = model.encode([query], convert_to_numpy=True)[0]
-    query_filter = policy.qdrant_filter(user)  # None only for super roles
+    with timed("embed_query"):
+        q_vector = model.encode([query], convert_to_numpy=True)[0]
+    query_filter = scoped_filter(policy.qdrant_filter(user), doc_ids)  # None only for super roles searching everything
 
     term_ids, term_weights = ([], [])
     if hybrid:
@@ -167,7 +183,7 @@ def search_embeddings(query, user, policy, db_path=None, collection_name=None, k
         term_ids, term_weights = SparseEncoder(encryptor.subkey("keyword-terms")).query(query)
     if hybrid and term_ids:
         # The filter must be on each branch: it is not applied to candidates that prefetch has already chosen.
-        results = client.query_points(
+        results = _timed_query(client,
             collection_name=collection_name,
             prefetch=[
                 Prefetch(query=q_vector.tolist(), using=DENSE, limit=hybrid_pool, filter=query_filter),
@@ -177,7 +193,7 @@ def search_embeddings(query, user, policy, db_path=None, collection_name=None, k
             query=FusionQuery(fusion=Fusion.RRF), limit=k, query_filter=query_filter,
         )
     else:                                   # dense only (also the fallback when the question has no usable keywords)
-        results = client.query_points(
+        results = _timed_query(client,
             collection_name=collection_name,
             query=q_vector.tolist(),
             using=DENSE,

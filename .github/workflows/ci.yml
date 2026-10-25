@@ -3,7 +3,8 @@ name: CI
 # Runs on every push to the main branches and on every pull request.
 #   lint          ruff: syntax errors and unused/undefined names
 #   test          the full pytest suite against real Neo4j and Qdrant service containers, with a coverage report
-#   docker-build  both images build, and the API image can import its libraries
+#   web           the React UI: lint, type check, tests, production build
+#   docker-build  the images build, and the API image can import its libraries
 #   audit         pip-audit over the pinned dependency lock; fails on any NEW advisory (known unfixable ones are listed below)
 
 on:
@@ -89,6 +90,25 @@ jobs:
           path: backend/coverage.xml
           if-no-files-found: ignore
 
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   docker-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -101,6 +121,8 @@ jobs:
         run: docker build ./backend -t mindsearch-api:ci
       - name: Build the frontend image
         run: docker build ./frontend -t mindsearch-frontend:ci
+      - name: Build the React UI image
+        run: docker build ./web -t mindsearch-web:ci
       - name: Smoke-test the API image
         run: docker run --rm mindsearch-api:ci python -c "import fastapi, qdrant_client, sentence_transformers, spacy, neo4j, celery; print('imports ok')"
 

@@ -62,7 +62,7 @@ def test_dense_only_finds_relevant_chunk_and_wraps_in_doc_tags(pipeline_factory,
     rag = pipeline_factory()
     rag.ingest_document(corpus_file, EVERYONE)
     ctx = rag.retrieve_context("When was the Eiffel Tower completed?", EMPLOYEE)
-    assert ctx and all(c.startswith("<doc>") and c.endswith("</doc>") for c in ctx)
+    assert ctx and all(c.startswith('<doc id="') and c.endswith("</doc>") for c in ctx)       # numbered: <doc id="1">...</doc>
     assert "1889" in ctx[0]
 
 
@@ -261,7 +261,9 @@ def test_retrieved_chunks_point_back_to_their_document(pipeline_factory, corpus_
     info = rag.ingest_document(corpus_file, EVERYONE)
     result = rag.retrieve("When was the Eiffel Tower completed?", EMPLOYEE)
     assert result.chunks and all(c["doc_id"] == info["doc_id"] and isinstance(c["chunk_index"], int) for c in result.chunks)
-    assert result.sources() == [{"doc_id": info["doc_id"], "chunk_index": result.chunks[0]["chunk_index"], "page": None}]   # a .md file has no pages
+    assert result.sources() == [{"n": n, "doc_id": info["doc_id"], "chunk_index": c["chunk_index"], "page": None}      # a .md file has no pages
+                                for n, c in enumerate(result.chunks, start=1)]
+    assert result.to_context()[0].startswith('<doc id="1">')                                                        # the numbers the model cites
 
 
 def test_ingest_reports_how_many_chunks_were_written(pipeline_factory, corpus_file):
@@ -308,7 +310,7 @@ def test_stream_answer_trims_the_context_to_the_model_window(pipeline_factory, m
 
     captured = {}
 
-    async def fake_generate(model, query, context, history=None):
+    async def fake_generate(model, query, context, history=None, today=None):
         captured["context"] = context
         yield "ok"
 

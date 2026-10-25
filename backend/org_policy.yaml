@@ -4,5 +4,6 @@ organization: MindSearch default
 levels:                 # ordered clearance ladder; a higher rank can read everything below it
   - {name: Employee, rank: 1}
   - {name: Manager,  rank: 2}
+  - {name: Admin,    rank: 3}   # documents only administrators can read (the Admin ROLE below bypasses every check; this LEVEL lets a document be marked admin-only)
 groups: []              # no departments in the default setup
 super_roles: [Admin]    # bypass every check (should be audited)

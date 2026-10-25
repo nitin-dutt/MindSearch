@@ -186,6 +186,23 @@ services:
       api:
         condition: service_healthy
 
+  # The React UI (web/): nginx serves the built app and forwards /api to the API, so the browser talks to one address.
+  # Bound to this machine only; to show it on another device use a temporary HTTPS tunnel to this one port (see README).
+  web:
+    build:
+      context: ./web
+    ports:
+      - "127.0.0.1:8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    depends_on:
+      api:
+        condition: service_healthy
+
   prometheus:
     image: prom/prometheus:v3.14.0
     ports:
@@ -201,6 +218,12 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
+      # Provisioning: the Prometheus data source and the MindSearch dashboard load by themselves (no clicking). Regenerate the
+      # dashboard with: python grafana/build_dashboard.py
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}      # localhost-only; set GRAFANA_ADMIN_PASSWORD in .env to change it
     mem_limit: 512m
     depends_on:
       - prometheus

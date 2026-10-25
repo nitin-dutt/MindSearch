@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+/* Colour tokens: a calm, pastel palette. Light by default, dark when the OS prefers it, and a manual override with data-theme on <html>.
+   --brand is the soft mint used for fills (the main button, your chat bubbles); --accent is its deeper shade for text, links and icons;
+   --warm is a soft peach for small touches such as the avatar. No gradients and no glows anywhere. */
+:root {
+  --bg: #f7f8f6; --panel: #ffffff; --ink: #26302c; --muted: #66726c; --line: #e5e9e5;
+  --accent: #3f7a63; --accent-ink: #ffffff; --accent-soft: #e6f2ec;
+  --brand: #b6dfcb; --brand-ink: #1f3b30; --warm: #f4d9c6; --warm-ink: #5b3d2a;
+  --side-bg: #b6dfcb; --side-ink: #1c3a2e; --side-muted: #3d5a4c; --side-line: rgba(28, 58, 46, 0.16); --side-accent: #1c5b43; --side-active: rgba(255, 255, 255, 0.7);
+  --shadow-card: 0 1px 2px rgba(38, 48, 44, 0.05), 0 4px 14px -6px rgba(38, 48, 44, 0.10);
+  --ok: #2f7a52; --ok-soft: #e3f3ea; --warn: #8a5a1b; --warn-soft: #fbefd9; --danger: #b4434a; --danger-soft: #fbe7e8;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1117; --panel: #161b22; --ink: #e6edf3; --muted: #8b949e; --line: #2a313c;
+    --accent: #86d9b6; --accent-ink: #0b1f17; --accent-soft: #16302a;
+    --brand: #86d9b6; --brand-ink: #0b1f17; --warm: #e7c4ab; --warm-ink: #3b2619;
+    --side-bg: #0a0e13; --side-ink: #e6edf3; --side-muted: #8b949e; --side-line: #222934; --side-accent: #86d9b6; --side-active: #16302a;
+    --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.02), 0 8px 24px -12px rgba(0, 0, 0, 0.65);
+    --ok: #6fd09a; --ok-soft: #15301f; --warn: #e3b567; --warn-soft: #33290f; --danger: #f2878f; --danger-soft: #3a1e21;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1117; --panel: #161b22; --ink: #e6edf3; --muted: #8b949e; --line: #2a313c;
+  --accent: #86d9b6; --accent-ink: #0b1f17; --accent-soft: #16302a;
+  --brand: #86d9b6; --brand-ink: #0b1f17; --warm: #e7c4ab; --warm-ink: #3b2619;
+    --side-bg: #0a0e13; --side-ink: #e6edf3; --side-muted: #8b949e; --side-line: #222934; --side-accent: #86d9b6; --side-active: #16302a;
+  --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.02), 0 8px 24px -12px rgba(0, 0, 0, 0.65);
+  --ok: #6fd09a; --ok-soft: #15301f; --warn: #e3b567; --warn-soft: #33290f; --danger: #f2878f; --danger-soft: #3a1e21;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg); --color-panel: var(--panel); --color-ink: var(--ink); --color-muted: var(--muted); --color-line: var(--line);
+  --color-accent: var(--accent); --color-accent-ink: var(--accent-ink); --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok); --color-ok-soft: var(--ok-soft); --color-warn: var(--warn); --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger); --color-danger-soft: var(--danger-soft);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html, body, #root { height: 100%; }
+body { background-color: var(--bg); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; letter-spacing: -0.003em; }
+/* Soft fills, not gradients: the main button, your own chat bubbles, the small number badges. */
+/* The sidebar has its own colours. Inside it the ordinary tokens are re-pointed, so every class used there (text-muted, border-line, text-accent, ...) follows. */
+.sidebar { background-color: var(--side-bg); --ink: var(--side-ink); --muted: var(--side-muted); --line: var(--side-line); --accent: var(--side-accent); --accent-soft: var(--side-active); color: var(--side-ink); }
+.sidebar .nav-active { background-color: var(--side-active); }
+.bg-brand { background-color: var(--brand); color: var(--brand-ink); }
+.shadow-card { box-shadow: var(--shadow-card); }
+.nav-active { position: relative; background-color: var(--accent-soft); }
+.nav-active::before { content: ""; position: absolute; left: -0.55rem; top: 0.45rem; bottom: 0.45rem; width: 3px; border-radius: 3px; background-color: var(--accent); }
+/* In the base layer so utility classes such as outline-none can override it (unlayered CSS always wins over layers). */
+@layer base { :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; } }
+/* Upload effect: the document icon fills from the top, its lines draw one after another, and the mind logo gives a small pulse while it "reads". */
+@keyframes docfill { 0% { transform: scaleY(0); } 70%, 100% { transform: scaleY(1); } }
+.doc-fill { transform-box: fill-box; transform-origin: top; animation: docfill 1.8s ease-in-out infinite; }
+@keyframes docline { 0%, 15% { stroke-dasharray: 0 12; } 45%, 100% { stroke-dasharray: 12 0; } }
+.doc-line { stroke-dasharray: 12 0; animation: docline 1.8s ease-in-out infinite; }
+@keyframes mindpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+.mind-pulse { animation: mindpulse 1.1s ease-in-out infinite; }
+@keyframes flash { 0% { background: var(--accent-soft); } 100% { background: transparent; } }
+.flash { animation: flash 1.4s ease-out; }
+@media (prefers-reduced-motion: reduce) { .flash, .mind-pulse, .doc-fill, .doc-line { animation: none; } * { scroll-behavior: auto !important; } }

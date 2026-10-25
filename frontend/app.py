@@ -864,10 +864,12 @@ with chat_container:
             if message.get("standalone"):
                 st.caption(f"🔎 Searched for: {html.escape(message['standalone'])}")
             if message.get("sources"):
-                st.caption("Sources: " + " · ".join(
-                    f"📄 {html.escape(src['filename'])} (page {src['page']})" if src.get("page") is not None
-                    else f"📄 {html.escape(src['filename'])} (part {src['chunk_index'] + 1})" if src.get("chunk_index") is not None
-                    else f"📄 {html.escape(src['filename'])}" for src in message["sources"]))
+                def source_line(src):
+                    where = (f"page {src['page']}" if src.get("page") is not None
+                             else f"part {src['chunk_index'] + 1}" if src.get("chunk_index") is not None else "")
+                    label = f"[{src['n']}] 📄 {html.escape(src['filename'])}" + (f" ({where})" if where else "")
+                    return f"**{label}**" if src.get("cited") else label          # bold = the answer cites it
+                st.caption("Sources: " + " · ".join(source_line(src) for src in message["sources"]))
 
 # --- INPUT AREA ---
 st.markdown("---")

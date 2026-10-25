@@ -8,7 +8,8 @@ import graph_ranker
 import logging
 
 from budget import context_budget, fit_context
-from llm import SYSTEM_PROMPT, stream_generate
+from metrics import STAGE_SECONDS
+from llm import build_system_prompt, stream_generate
 from settings import get_settings
 from encryptor import Encryptor
 from pipeline_config import PipelineConfig
@@ -30,19 +31,22 @@ class RetrievalResult:
     graph_chunks_added: int = 0                       # final passages that came in through the graph, not the search
 
     def sources(self):
-        """Which documents the final chunks came from, in rank order, one entry per document:
-        [{"doc_id", "chunk_index", "page"}]. The UI turns these into citations; `page` (1-based, PDFs only) is the first page of the
-        best-ranked chunk from that document."""
-        seen, out = set(), []
-        for r in self.chunks:
-            if r.get("doc_id") and r["doc_id"] not in seen:
-                seen.add(r["doc_id"])
-                out.append({"doc_id": r["doc_id"], "chunk_index": r.get("chunk_index"), "page": r.get("page")})
-        return out
+        """One entry per passage the model was shown, numbered like the citations in its answer:
+        [{"n", "doc_id", "chunk_index", "page"}]. `n` is the number in `<doc id="n">` (and in the answer's [n]); `page` is 1-based, PDFs only."""
+        return [{"n": n, "doc_id": r["doc_id"], "chunk_index": r.get("chunk_index"), "page": r.get("page")}
+                for n, r in enumerate(self.chunks, start=1) if r.get("doc_id")]
+
+    def top_relevance(self):
+        """Cross-encoder score of the best passage (None if nothing was retrieved). Graph-ranked results keep it as `ce`; for plain results
+        the passage score is the cross-encoder score already."""
+        if not self.chunks:
+            return None
+        best = self.chunks[0]
+        return best.get("ce", best.get("score"))
 
     def to_context(self):
-        """Prompt-ready context strings, wrapped in the XML tags the system prompt expects."""
-        return ([f"<doc>{r['chunk']}</doc>" for r in self.chunks]
+        """Prompt-ready context strings: passages numbered <doc id="1">, <doc id="2"> ... (the numbers the model cites), then graph facts."""
+        return ([f'<doc id="{n}">{r["chunk"]}</doc>' for n, r in enumerate(self.chunks, start=1)]
                 + [f"<kg_fact>{r['chunk']}</kg_fact>" for r in self.graph_facts])
 
 
@@ -112,7 +116,9 @@ class RAGPipeline:
 
     # ---------- retrieval ----------
 
-    def retrieve(self, query, user: User) -> RetrievalResult:
+    def retrieve(self, query, user: User, doc_ids=None) -> RetrievalResult:
+        """Passages for `query` that `user` may read. With `doc_ids` the search is limited to those documents (the user picked a
+        file); the graph step is skipped then, because graph hops can lead to passages of other documents."""
         cfg = self.config
         result = RetrievalResult()
 
@@ -121,12 +127,12 @@ class RAGPipeline:
             query, cfg.qdrant_path, user, self.policy, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
             reranker=self.reranker, encryptor=self.encryptor,
             collection_name=cfg.collection, rerank_margin=cfg.rerank_margin,
-            hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool,
+            hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool, doc_ids=doc_ids,
         )
         result.chunks, result.dense_pool = detail["results"], detail["pool"]
         result.timings_ms["dense_and_rerank"] = (time.perf_counter() - t0) * 1000
 
-        if self.kg_builder is not None:
+        if self.kg_builder is not None and not doc_ids:
             t0 = time.perf_counter()
             seed_keys = []
             if cfg.graph_expand and result.chunks:
@@ -138,6 +144,7 @@ class RAGPipeline:
                 else:
                     result.graph_facts = [{"chunk": f, "score": 0.0} for f in result.graph_pool[:cfg.graph_k]]
             result.timings_ms["graph"] = (time.perf_counter() - t0) * 1000
+            STAGE_SECONDS.labels("graph").observe(result.timings_ms["graph"] / 1000)
 
         return result
 
@@ -200,21 +207,28 @@ class RAGPipeline:
             result.graph_chunks_added = sum(1 for r in result.chunks if r.get("via_graph"))
         return keys
 
+    def should_abstain(self, result: RetrievalResult) -> bool:
+        """The refusal gate: True when the best passage is too weakly related to the question to answer from (cfg.abstain_below).
+        Nothing retrieved is handled elsewhere; with no threshold configured the gate is off."""
+        threshold = self.config.abstain_below
+        top = result.top_relevance()
+        return threshold is not None and top is not None and top < threshold
+
     def retrieve_context(self, query, user: User):
         return self.retrieve(query, user).to_context()
 
     # ---------- generation ----------
 
-    def fit_to_window(self, query, context, history=None):
+    def fit_to_window(self, query, context, history=None, today=None):
         """The context items that fit the model window next to the system prompt, the chat history, the question and the answer."""
         cfg = get_settings()
-        budget = context_budget(cfg.model_max_len, cfg.answer_max_tokens, SYSTEM_PROMPT, history, query)
+        budget = context_budget(cfg.model_max_len, cfg.answer_max_tokens, build_system_prompt(today), history, query)
         kept, dropped = fit_context(context, budget)
         if dropped:
             log.warning("context trimmed to fit the model window: %d of %d items dropped (budget %d tokens)", dropped, len(context), budget)
         return kept
 
-    async def stream_answer(self, query, context, history=None):
-        ctx = "\n\n".join(self.fit_to_window(query, context, history))
-        async for token in stream_generate(self.config.generator_model, query, ctx, history):
+    async def stream_answer(self, query, context, history=None, today=None):
+        ctx = "\n\n".join(self.fit_to_window(query, context, history, today))
+        async for token in stream_generate(self.config.generator_model, query, ctx, history, today):
             yield token
