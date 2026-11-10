@@ -75,7 +75,7 @@ jobs:
           pip install -r backend/requirements.txt -c backend/constraints.txt pytest pytest-cov
           pip install "${SPACY_MODEL_URL}"
       - name: Cache downloaded models
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface
           key: hf-models-${{ hashFiles('backend/settings.py') }}
