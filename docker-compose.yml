@@ -213,7 +213,7 @@ services:
     mem_limit: 1g
 
   grafana:
-    image: grafana/grafana:13.2.1
+    image: grafana/grafana:13.3.0
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
