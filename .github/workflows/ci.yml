@@ -134,8 +134,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit
       - name: Audit the pinned dependency lock
-        # Ignored on purpose: advisories that have NO fixed release yet (checked 2026-10-13). Re-check when upgrading these packages.
-        #   PYSEC-2026-2447 diskcache, PYSEC-2026-3740 nltk, PYSEC-2026-3046 ragas
+        # Ignored on purpose: advisories that have NO fixed release yet (checked 2026-10-13, re-checked 2026-11-18). Re-check when
+        # upgrading these packages.  PYSEC-2026-2447 diskcache, PYSEC-2026-3046 ragas  (the nltk one was fixed in 3.10.4)
         run: >-
           pip-audit -r backend/constraints.txt --no-deps --disable-pip
-          --ignore-vuln PYSEC-2026-2447 --ignore-vuln PYSEC-2026-3740 --ignore-vuln PYSEC-2026-3046
+          --ignore-vuln PYSEC-2026-2447 --ignore-vuln PYSEC-2026-3046

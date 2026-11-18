@@ -9,7 +9,7 @@ uvicorn[standard]==0.53.0
 pydantic==2.13.5
 prometheus-fastapi-instrumentator==8.1.0
 prometheus-client==0.26.0
-nltk==3.10.3
+nltk==3.10.4
 python-docx==1.2.0
 pdfplumber==0.11.10
 # OCR for scanned pages and pictures (ocr.py). pytesseract only drives the local `tesseract` program, which the Docker image
