@@ -35,7 +35,9 @@ from access_policy import DocACL
 from answers import ABSTAIN_MESSAGE, extract_citations, is_abstention
 
 EVAL_ACL = DocACL(min_rank=0)  # evaluation documents are readable by everyone; queries run as the superuser
-MAX_KG_FAILURE_RATE = 0.25  # abort the run if more than this share of chunks fail extraction
+from settings import get_settings  # noqa: E402
+
+MAX_KG_FAILURE_RATE = get_settings().kg_max_failure_rate  # abort the run past this share of failed chunks (same rule as uploads)
 POOL_KS = (1, 3, 5, 10, 20)
 FINAL_KS = (1, 3)
 
