@@ -149,7 +149,7 @@ referencing==0.37.0
 regex==2026.9.10
 requests==2.34.2
 requests-toolbelt==1.0.0
-rich==14.3.4
+rich==15.0.0
 rpds-py==2026.6.3
 safetensors==0.8.0
 scikit-learn==1.9.1
