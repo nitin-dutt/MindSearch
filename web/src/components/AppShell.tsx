@@ -74,12 +74,12 @@ export function AppShell() {
           title={slim ? label : undefined}
           onClick={() => setOpen(false)}
           className={({ isActive }) =>
-            `flex items-center gap-3 rounded-lg py-2 text-sm font-medium transition ${slim ? "justify-center px-0" : "px-3"} ${
+            `flex h-9 items-center gap-3 rounded-lg text-sm font-medium transition-colors ${slim ? "justify-center px-0" : "px-3"} ${
               isActive ? "nav-active text-accent" : "text-muted hover:bg-accent-soft hover:text-ink"
             }`
           }
         >
-          <Icon className={slim ? "size-5" : "size-4"} aria-hidden />
+          <Icon className="size-4 shrink-0" aria-hidden />
           <span className={slim ? "sr-only" : ""}>{label}</span>
         </NavLink>
       ))}
@@ -87,7 +87,7 @@ export function AppShell() {
   );
 
   const renderAccount = (slim: boolean) => (
-    <div className="space-y-3 border-t border-line pt-4">
+    <div className="space-y-4 border-t border-line pt-4">
       <div className={`flex items-center gap-3 ${slim ? "justify-center" : ""}`} title={slim ? `${user?.username} (${user?.level})` : undefined}>
         <div className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--warm)] text-sm font-semibold uppercase text-[var(--warm-ink)]" aria-hidden>
           {user?.username.slice(0, 1)}
@@ -95,7 +95,7 @@ export function AppShell() {
         {!slim && (
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{user?.username}</div>
-            <div className="mt-0.5 flex flex-wrap gap-1">
+            <div className="mt-1 flex flex-wrap gap-1">
               <Badge tone="accent">{user?.level}</Badge>
               {user?.is_super && <Badge tone="warn">admin</Badge>}
             </div>
@@ -103,12 +103,12 @@ export function AppShell() {
         )}
       </div>
       {!slim && import.meta.env.DEV && devUsers.length > 0 && (
-        <label className="block rounded-lg border border-dashed border-line px-3 py-2 text-xs text-muted">
+        <label className="block rounded-lg border border-dashed border-line p-3 text-xs text-muted">
           Dev: switch account
           <select
             value={user?.username ?? ""}
             onChange={(e) => void switchTo(e.target.value)}
-            className="mt-1 w-full rounded-md border border-line bg-bg px-2 py-1 text-xs text-ink"
+            className="mt-2 h-8 w-full rounded-md border border-line bg-bg px-2 text-xs text-ink"
           >
             {devUsers.map((u) => (
               <option key={u.username} value={u.username}>
@@ -122,18 +122,18 @@ export function AppShell() {
         <button
           onClick={cycleTheme}
           title={slim ? `Theme: ${theme}` : undefined}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:text-ink"
+          className={`flex h-8 items-center justify-center gap-2 rounded-lg border border-line px-3 text-xs capitalize text-muted transition-colors hover:text-ink ${slim ? "" : "flex-1"}`}
           aria-label={`Theme: ${theme}. Click to change`}
         >
-          <ThemeIcon className="size-3.5" aria-hidden /> {!slim && theme}
+          <ThemeIcon className="size-4 shrink-0" aria-hidden /> {!slim && theme}
         </button>
         <button
           onClick={signOut}
           title={slim ? "Sign out" : undefined}
           aria-label="Sign out"
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:text-danger"
+          className={`flex h-8 items-center justify-center gap-2 rounded-lg border border-line px-3 text-xs text-muted transition-colors hover:text-danger ${slim ? "" : "flex-1"}`}
         >
-          <LogOut className="size-3.5" aria-hidden /> {!slim && "Sign out"}
+          <LogOut className="size-4 shrink-0" aria-hidden /> {!slim && "Sign out"}
         </button>
       </div>
     </div>
@@ -142,7 +142,7 @@ export function AppShell() {
   return (
     <div className="flex h-full">
       <aside
-        className={`sidebar hidden shrink-0 flex-col gap-6 border-r border-line transition-[width] duration-200 md:flex ${collapsed ? "w-[4.75rem] p-3" : "w-64 p-5"}`}
+        className={`sidebar hidden shrink-0 flex-col gap-6 border-r border-line transition-[width] duration-200 md:flex ${collapsed ? "w-[4.5rem] p-3" : "w-64 p-5"}`}
       >
         <div className={`flex items-center ${collapsed ? "flex-col gap-4" : "justify-between"}`}>
           <Brand compact={collapsed} />
@@ -152,7 +152,7 @@ export function AppShell() {
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-expanded={!collapsed}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className="rounded p-1 text-muted transition hover:text-ink"
+            className="grid size-8 place-items-center rounded-lg text-muted transition-colors hover:bg-accent-soft hover:text-ink"
           >
             {collapsed ? <ChevronsRight className="size-4" aria-hidden /> : <ChevronsLeft className="size-4" aria-hidden />}
           </button>
@@ -162,9 +162,9 @@ export function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sidebar flex items-center justify-between border-b border-line px-4 py-3 md:hidden">
+        <header className="sidebar flex h-14 items-center justify-between border-b border-line px-4 md:hidden">
           <Brand />
-          <button aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open} onClick={() => setOpen((o) => !o)} className="rounded-lg p-2 text-muted hover:bg-accent-soft">
+          <button aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open} onClick={() => setOpen((o) => !o)} className="grid size-9 place-items-center rounded-lg text-muted hover:bg-accent-soft">
             {open ? <X className="size-5" /> : <Menu className="size-5" />}
           </button>
         </header>
@@ -185,7 +185,7 @@ export function AppShell() {
 /** The logo is just the mind symbol and the name. The symbol is the target of the "document goes into the mind" upload effect. */
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="flex items-center gap-2.5">
+    <div className="flex h-9 items-center gap-3">
       <span className="grid size-9 place-items-center rounded-full" data-mind-target>
         <MindMark className="size-8" />
       </span>
