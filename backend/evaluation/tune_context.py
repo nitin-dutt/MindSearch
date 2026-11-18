@@ -23,7 +23,7 @@ def collect(rag, items):
     """For each question: gold, dense candidate texts (dense order) and their reranker scores."""
     rows = []
     for it in items:
-        pool = rag.retrieve(it["question"], role="Admin").dense_pool
+        pool = rag.retrieve(it["question"], rag.policy.superuser()).dense_pool
         scores = [float(s) for s in rag.reranker.model.predict([[it["question"], t] for t in pool])]
         rows.append({"question": it["question"], "gold": it["gold_passages"], "pool": pool, "scores": scores})
     return rows

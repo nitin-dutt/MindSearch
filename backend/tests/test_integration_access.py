@@ -18,7 +18,7 @@ import api  # noqa: E402
 import auth  # noqa: E402
 from access_policy import AccessPolicy, DocACL  # noqa: E402
 from audit import AuditLog  # noqa: E402
-from embedder import close_qdrant_client  # noqa: E402
+from vector_db import close_qdrant_client  # noqa: E402
 from encryptor import Encryptor  # noqa: E402
 from pipeline_config import get_preset  # noqa: E402
 from rag_pipeline import RAGPipeline  # noqa: E402

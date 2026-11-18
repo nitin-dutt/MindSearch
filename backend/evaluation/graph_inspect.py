@@ -8,7 +8,7 @@ from evaluation import metrics as M
 from evaluation.datasets import load_dataset
 from evaluation.generate import build_pipeline
 from pipeline_config import get_preset
-from retriever import load_chunks, retrieve_detailed
+from retriever import retrieve_detailed
 
 
 def short(t, n=26):
@@ -24,13 +24,12 @@ def main():
     corpus, items = load_dataset(args.dataset)
     cfg0 = get_preset("hybrid_graph_chunks")
     rag, _, _ = build_pipeline(args.dataset, corpus, cfg0)
-    cfg, kg, user = rag.config, rag.kg_builder, rag.policy.superuser()
+    kg, user = rag.kg_builder, rag.policy.superuser()
     shown = 0
     skipped = 0
     for item in items:
         q, gold = item["question"], item["gold_passages"]
-        d = retrieve_detailed(q, cfg.qdrant_path, user, rag.policy, candidate_k=20, final_k=3, reranker=rag.reranker,
-                              encryptor=rag.encryptor, collection_name=cfg.collection, hybrid=True)
+        d = retrieve_detailed(q, rag.store, user, candidate_k=20, final_k=3, reranker=rag.reranker, hybrid=True)
         final = d["results"]
         cover = M.coverage([r["chunk"] for r in final], gold)
         found = set().union(*cover) if cover else set()
@@ -53,7 +52,7 @@ def main():
         missing_idx = [i for i in range(len(gold)) if i not in found]
         for m in missing_idx:
             hit = [(ref, ks) for ref, ks in kg.chunk_refs_for_entities(seeds + qkeys, user, 12).items()]
-            texts = load_chunks([ref for ref, _ in hit], user, rag.policy, rag.encryptor, cfg.qdrant_path, cfg.collection)
+            texts = rag.store.fetch([ref for ref, _ in hit], user)
             ks_of = {ref: ks for ref, ks in hit}
             for t in texts:
                 if M.normalize_passage(gold[m]) in M.normalize_passage(t["chunk"]):

@@ -1,9 +1,9 @@
 import time
 from dataclasses import dataclass, field
 
-from chunker import run_chunking_with_pages
-from embedder import build_embeddings
-from retriever import load_chunks, retrieve_detailed
+from chunker import chunk_document
+from chunk_store import ChunkStore
+from retriever import retrieve_detailed
 import graph_ranker
 import logging
 
@@ -61,6 +61,8 @@ class RAGPipeline:
             from reranker import ReRanker
             self.reranker = ReRanker()
         self.encryptor = encryptor or Encryptor()
+        # Every passage is stored and read through this one object; it applies the access filter and the encryption (chunk_store.py).
+        self.store = ChunkStore(self.config.qdrant_path, self.config.collection, self.encryptor, self.policy)
         self._registry = None
         self.kg_builder = None
         if self.config.use_graph:
@@ -83,8 +85,8 @@ class RAGPipeline:
         chunks = run_chunking_with_pages(file_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap,
                                          split_long=cfg.split_long_paragraphs)
         plaintext_chunks = [c.text for c in chunks]
-        build_embeddings(plaintext_chunks, self.encryptor, acl, cfg.qdrant_path,
-                         collection_name=cfg.collection, doc_id=doc_id, pages=[(c.page_start, c.page_end) for c in chunks])
+        self.store.add(plaintext_chunks, acl, doc_id=doc_id, pages=[(c.page_start, c.page_end) for c in chunks],
+                       ocr_flags=[c.ocr for c in chunks])
         return plaintext_chunks
 
     def ingest_graph(self, plaintext_chunks, acl: DocACL, doc_id=None):
@@ -106,9 +108,7 @@ class RAGPipeline:
     def delete_document(self, doc_id) -> dict:
         """Remove a document everywhere: chunks, graph facts, then its registry entry (last, so a half-finished
         delete stays visible and can simply be retried). Idempotent."""
-        from embedder import delete_document_chunks
-        cfg = self.config
-        report = {"chunks_deleted": delete_document_chunks(doc_id, cfg.qdrant_path, cfg.collection)}
+        report = {"chunks_deleted": self.store.delete(doc_id)}
         if self.kg_builder is not None:
             report["graph"] = self.kg_builder.delete_document(doc_id)
         self.registry.delete(doc_id)
@@ -123,12 +123,8 @@ class RAGPipeline:
         result = RetrievalResult()
 
         t0 = time.perf_counter()
-        detail = retrieve_detailed(
-            query, cfg.qdrant_path, user, self.policy, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
-            reranker=self.reranker, encryptor=self.encryptor,
-            collection_name=cfg.collection, rerank_margin=cfg.rerank_margin,
-            hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool, doc_ids=doc_ids,
-        )
+        detail = retrieve_detailed(query, self.store, user, candidate_k=cfg.candidate_k, final_k=cfg.final_k, reranker=self.reranker,
+                                   rerank_margin=cfg.rerank_margin, hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool, doc_ids=doc_ids)
         result.chunks, result.dense_pool = detail["results"], detail["pool"]
         result.timings_ms["dense_and_rerank"] = (time.perf_counter() - t0) * 1000
 
@@ -169,10 +165,10 @@ class RAGPipeline:
         cand = kg.candidate_chunks(sorted(q_keys | s_keys), user, cfg.graph_hub_limit)
         in_pool = {(c.get("doc_id"), c.get("chunk_index")) for c in items}
         new_refs = sorted((r for r in cand if r not in in_pool), key=lambda r: (-len(cand[r]["keys"]) - 2 * len(cand[r]["pages"]), r))
-        extra = load_chunks(new_refs[:cfg.graph_chunk_pool], user, self.policy, self.encryptor, cfg.qdrant_path, cfg.collection)
+        extra = self.store.fetch(new_refs[:cfg.graph_chunk_pool], user)
         if extra:
             for r in self.reranker.rerank(query, [e["chunk"] for e in extra], top_k=len(extra)):
-                items.append({**extra[r["original_index"]], "ce": r["score"], "via_graph": 1, "pool_rank": 0.0})
+                items.append({**extra[r["original_index"]], "ce": r["score"], "via_graph": 1, "pool_rank": 0.0})   # `score` is set by graph_select
         mentions = kg.entities_by_chunk([(c["doc_id"], c["chunk_index"]) for c in items if c.get("doc_id") is not None], user)
         best_ce = max(c["ce"] for c in items)
         bridge = s_keys - q_keys
@@ -213,9 +209,6 @@ class RAGPipeline:
         threshold = self.config.abstain_below
         top = result.top_relevance()
         return threshold is not None and top is not None and top < threshold
-
-    def retrieve_context(self, query, user: User):
-        return self.retrieve(query, user).to_context()
 
     # ---------- generation ----------
 

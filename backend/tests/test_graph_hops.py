@@ -124,7 +124,7 @@ def test_query_entity_keys_pick_up_names_and_noun_phrases(kg):
 def test_a_second_hop_passage_is_found_through_the_graph(kg, tmp_path):
     pytest.importorskip("sentence_transformers")
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    from embedder import close_qdrant_client
+    from vector_db import close_qdrant_client
     from encryptor import Encryptor
     from pipeline_config import get_preset
     from rag_pipeline import RAGPipeline

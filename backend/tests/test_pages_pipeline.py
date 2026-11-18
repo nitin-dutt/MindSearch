@@ -6,7 +6,7 @@ pytest.importorskip("qdrant_client")
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 
-import embedder  # noqa: E402
+import vector_db  # noqa: E402
 from access_policy import DocACL, get_default_policy  # noqa: E402
 from encryptor import Encryptor  # noqa: E402
 from pipeline_config import get_preset  # noqa: E402
@@ -29,7 +29,7 @@ def make(tmp_path):
 
     yield build
     for path in made:
-        embedder.close_qdrant_client(path)
+        vector_db.close_qdrant_client(path)
 
 
 def test_a_pdf_answer_cites_the_right_page(make, tmp_path):

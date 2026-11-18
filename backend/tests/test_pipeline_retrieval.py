@@ -10,7 +10,7 @@ pytest.importorskip("qdrant_client")
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 
 from access_policy import AccessPolicy, DocACL, get_default_policy  # noqa: E402
-from embedder import close_qdrant_client  # noqa: E402
+from vector_db import close_qdrant_client  # noqa: E402
 from encryptor import Encryptor  # noqa: E402
 from pipeline_config import PRESETS, PipelineConfig, get_preset  # noqa: E402
 from rag_pipeline import RAGPipeline  # noqa: E402
@@ -55,13 +55,13 @@ def test_empty_index_returns_no_context_not_placeholder_text(pipeline_factory):
     rag = pipeline_factory()
     result = rag.retrieve("Where is the Eiffel Tower?", ADMIN)
     assert result.chunks == [] and result.dense_pool == []
-    assert rag.retrieve_context("Where is the Eiffel Tower?", ADMIN) == []
+    assert rag.retrieve("Where is the Eiffel Tower?", ADMIN).to_context() == []
 
 
 def test_dense_only_finds_relevant_chunk_and_wraps_in_doc_tags(pipeline_factory, corpus_file):
     rag = pipeline_factory()
     rag.ingest_document(corpus_file, EVERYONE)
-    ctx = rag.retrieve_context("When was the Eiffel Tower completed?", EMPLOYEE)
+    ctx = rag.retrieve("When was the Eiffel Tower completed?", EMPLOYEE).to_context()
     assert ctx and all(c.startswith('<doc id="') and c.endswith("</doc>") for c in ctx)       # numbered: <doc id="1">...</doc>
     assert "1889" in ctx[0]
 
@@ -141,13 +141,11 @@ class _FakeReranker:
 
 
 def _retrieve_with(scores, margin, pipeline_factory, corpus_file):
-    from retriever import retrieve
+    from retriever import retrieve_detailed
     rag = pipeline_factory("dense_only", chunk_size=15, chunk_overlap=0)
     rag.ingest_document(corpus_file, EVERYONE)
-    cfg = rag.config
-    results, _ = retrieve("anything", cfg.qdrant_path, ADMIN, rag.policy, candidate_k=3, final_k=3,
-                          reranker=_FakeReranker(scores), encryptor=rag.encryptor,
-                          collection_name=cfg.collection, rerank_margin=margin)
+    results = retrieve_detailed("anything", rag.store, ADMIN, candidate_k=3, final_k=3, reranker=_FakeReranker(scores),
+                                rerank_margin=margin)["results"]
     return results
 
 
@@ -170,7 +168,7 @@ def test_dynamic_presets_exist_and_use_a_margin():
 # ------------------------------------------------ tamper resistance (SEC-07)
 
 def _all_points(rag):
-    from embedder import get_qdrant_client
+    from vector_db import get_qdrant_client
     client = get_qdrant_client(rag.config.qdrant_path)
     points, _ = client.scroll(rag.config.collection, limit=100, with_payload=True)
     return client, points
@@ -214,7 +212,7 @@ def test_untampered_data_still_decrypts_after_the_integrity_checks(pipeline_fact
 # ------------------------------------------------------ idempotent ingestion (INF-03)
 
 def _count(rag):
-    from embedder import get_qdrant_client
+    from vector_db import get_qdrant_client
     return get_qdrant_client(rag.config.qdrant_path).count(rag.config.collection).count
 
 
@@ -246,7 +244,7 @@ def test_same_file_with_a_different_access_rule_is_a_separate_document(pipeline_
 
 
 def test_points_carry_their_document_identity(pipeline_factory, corpus_file):
-    from embedder import get_qdrant_client
+    from vector_db import get_qdrant_client
     rag = pipeline_factory(chunk_size=15, chunk_overlap=0)
     doc_id = rag.ingest_document(corpus_file, EVERYONE)["doc_id"]
     points, _ = get_qdrant_client(rag.config.qdrant_path).scroll(rag.config.collection, limit=50, with_payload=True)

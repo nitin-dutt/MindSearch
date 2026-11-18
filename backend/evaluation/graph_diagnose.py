@@ -14,7 +14,7 @@ from evaluation import metrics as M
 from evaluation.datasets import load_dataset
 from evaluation.generate import build_pipeline
 from pipeline_config import get_preset
-from retriever import load_chunks, retrieve_detailed
+from retriever import retrieve_detailed
 
 
 def main():
@@ -34,8 +34,8 @@ def main():
     ranks = []
     for item in items:
         gold = item["gold_passages"]
-        d = retrieve_detailed(item["question"], cfg.qdrant_path, user, rag.policy, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
-                              reranker=rag.reranker, encryptor=rag.encryptor, collection_name=cfg.collection,
+        d = retrieve_detailed(item["question"], rag.store, user, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
+                              reranker=rag.reranker,
                               rerank_margin=cfg.rerank_margin, hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool)
         final = d["results"]
         cover = M.coverage([r["chunk"] for r in final], gold)
@@ -63,7 +63,7 @@ def main():
         if cand:
             c["graph_proposed_candidates"] += 1
         best = sorted(cand, key=lambda ref: (-len(cand[ref]), ref))[:cfg.graph_chunk_pool]
-        texts = load_chunks(best, user, rag.policy, rag.encryptor, cfg.qdrant_path, cfg.collection)
+        texts = rag.store.fetch(best, user)
         cov = M.coverage([t["chunk"] for t in texts], gold)
         if any(i in set().union(*cov) for i in missing) if cov else False:
             c["missing_passage_among_proposed_candidates"] += 1
