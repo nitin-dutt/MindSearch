@@ -1,0 +1,82 @@
+{
+  "label": "perf01-before-rerank-twice-rep2",
+  "created_utc": "20261117-082048",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "PERF-01 before, repeat (A-B-A order): RERANK_ONCE=0",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 11.0,
+      "throughput_rps": 0.73,
+      "ttft_p50_ms": 856,
+      "ttft_p95_ms": 980,
+      "total_p50_ms": 1295,
+      "total_p95_ms": 1851,
+      "retrieval_p50_ms": 792,
+      "health_p50_ms": 2,
+      "health_p95_ms": 3,
+      "health_max_ms": 4,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 18.6,
+      "throughput_rps": 1.08,
+      "ttft_p50_ms": 2495,
+      "ttft_p95_ms": 4606,
+      "total_p50_ms": 4687,
+      "total_p95_ms": 7777,
+      "retrieval_p50_ms": 1725,
+      "health_p50_ms": 3,
+      "health_p95_ms": 16,
+      "health_max_ms": 27,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 46.2,
+      "throughput_rps": 0.87,
+      "ttft_p50_ms": 6880,
+      "ttft_p95_ms": 10784,
+      "total_p50_ms": 10174,
+      "total_p95_ms": 18430,
+      "retrieval_p50_ms": 6212,
+      "health_p50_ms": 14,
+      "health_p95_ms": 53,
+      "health_max_ms": 177,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 101.1,
+      "throughput_rps": 0.79,
+      "ttft_p50_ms": 20052,
+      "ttft_p95_ms": 24918,
+      "total_p50_ms": 23643,
+      "total_p95_ms": 32701,
+      "retrieval_p50_ms": 19426,
+      "health_p50_ms": 15,
+      "health_p95_ms": 43,
+      "health_max_ms": 175,
+      "health_timeouts": 0
+    }
+  ]
+}
