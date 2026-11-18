@@ -1,0 +1,106 @@
+{
+  "set": "ocr_docvqa20",
+  "frozen": true,
+  "n_pages": 20,
+  "n_questions": 54,
+  "tesseract": "5.5.0",
+  "cpu": "x86_64",
+  "cpu_count": 32,
+  "settings": {
+    "ocr_languages": "eng",
+    "ocr_dpi": 200,
+    "ocr_min_confidence": 50.0,
+    "ocr_min_chars": 20,
+    "ocr_page_timeout_s": 30.0
+  },
+  "results": {
+    "before/jpg": {
+      "answer_found": {
+        "mean": 0.0,
+        "ci_low": 0.0,
+        "ci_high": 0.0,
+        "n": 54,
+        "count": 0
+      },
+      "answer_found_raw": {
+        "mean": 0.0,
+        "ci_low": 0.0,
+        "ci_high": 0.0,
+        "n": 54,
+        "count": 0
+      },
+      "pages_with_text": 0,
+      "pages_reported_unreadable": 0,
+      "junk_removed": 0,
+      "seconds_per_page_mean": 0.012072325949975492,
+      "seconds_per_page_median": 0.00879543500013824,
+      "seconds_per_page_max": 0.04412925799988443
+    },
+    "before/pdf": {
+      "answer_found": {
+        "mean": 0.0,
+        "ci_low": 0.0,
+        "ci_high": 0.0,
+        "n": 54,
+        "count": 0
+      },
+      "answer_found_raw": {
+        "mean": 0.0,
+        "ci_low": 0.0,
+        "ci_high": 0.0,
+        "n": 54,
+        "count": 0
+      },
+      "pages_with_text": 0,
+      "pages_reported_unreadable": 0,
+      "junk_removed": 0,
+      "seconds_per_page_mean": 0.010744137649999175,
+      "seconds_per_page_median": 0.010721779000959941,
+      "seconds_per_page_max": 0.011910436000107438
+    },
+    "after/jpg": {
+      "answer_found": {
+        "mean": 0.7962962962962963,
+        "ci_low": 0.6851851851851852,
+        "ci_high": 0.9074074074074074,
+        "n": 54,
+        "count": 43
+      },
+      "answer_found_raw": {
+        "mean": 0.7777777777777778,
+        "ci_low": 0.6666666666666666,
+        "ci_high": 0.8888888888888888,
+        "n": 54,
+        "count": 42
+      },
+      "pages_with_text": 20,
+      "pages_reported_unreadable": 0,
+      "junk_removed": 3,
+      "seconds_per_page_mean": 0.9295876554000643,
+      "seconds_per_page_median": 0.9447497639994253,
+      "seconds_per_page_max": 1.3302768000012293
+    },
+    "after/pdf": {
+      "answer_found": {
+        "mean": 0.7592592592592593,
+        "ci_low": 0.6296296296296297,
+        "ci_high": 0.8703703703703703,
+        "n": 54,
+        "count": 41
+      },
+      "answer_found_raw": {
+        "mean": 0.7407407407407407,
+        "ci_low": 0.6111111111111112,
+        "ci_high": 0.8518518518518519,
+        "n": 54,
+        "count": 40
+      },
+      "pages_with_text": 20,
+      "pages_reported_unreadable": 0,
+      "junk_removed": 2,
+      "seconds_per_page_mean": 0.9761662872999295,
+      "seconds_per_page_median": 0.9862287460000516,
+      "seconds_per_page_max": 1.3830126950015256
+    }
+  }
+}
