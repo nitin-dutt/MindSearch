@@ -1,0 +1,82 @@
+{
+  "label": "perf01-before-rerank-twice",
+  "created_utc": "20261117-081356",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "PERF-01 before: RERANK_ONCE=0, default preset hybrid_graph_chunks, squad_corpus seeded",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 17.9,
+      "throughput_rps": 0.45,
+      "ttft_p50_ms": 1757,
+      "ttft_p95_ms": 2113,
+      "total_p50_ms": 2303,
+      "total_p95_ms": 2802,
+      "retrieval_p50_ms": 1446,
+      "health_p50_ms": 2,
+      "health_p95_ms": 13,
+      "health_max_ms": 18,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 23.3,
+      "throughput_rps": 0.86,
+      "ttft_p50_ms": 3366,
+      "ttft_p95_ms": 4906,
+      "total_p50_ms": 5447,
+      "total_p95_ms": 9368,
+      "retrieval_p50_ms": 2671,
+      "health_p50_ms": 4,
+      "health_p95_ms": 21,
+      "health_max_ms": 109,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 50.7,
+      "throughput_rps": 0.79,
+      "ttft_p50_ms": 7611,
+      "ttft_p95_ms": 14241,
+      "total_p50_ms": 11993,
+      "total_p95_ms": 17802,
+      "retrieval_p50_ms": 6594,
+      "health_p50_ms": 16,
+      "health_p95_ms": 49,
+      "health_max_ms": 132,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 101.8,
+      "throughput_rps": 0.79,
+      "ttft_p50_ms": 20363,
+      "ttft_p95_ms": 23910,
+      "total_p50_ms": 24327,
+      "total_p95_ms": 32242,
+      "retrieval_p50_ms": 19782,
+      "health_p50_ms": 16,
+      "health_p95_ms": 58,
+      "health_max_ms": 158,
+      "health_timeouts": 0
+    }
+  ]
+}
