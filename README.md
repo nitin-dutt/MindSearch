@@ -2,16 +2,18 @@
 
 [![CI](https://github.com/nitin-dutt/MindSearch/actions/workflows/ci.yml/badge.svg)](https://github.com/nitin-dutt/MindSearch/actions/workflows/ci.yml)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: All rights reserved](https://img.shields.io/badge/License-All%20rights%20reserved-lightgrey.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://www.python.org/)
 [![vLLM](https://img.shields.io/badge/Engine-vLLM%20(AWQ)-purple.svg)](https://github.com/vllm-project/vllm)
 [![Vector DB: Qdrant](https://img.shields.io/badge/Vector%20DB-Qdrant-red.svg)](https://qdrant.tech/)
 [![Graph DB: Neo4j](https://img.shields.io/badge/Graph%20DB-Neo4j-blue.svg)](https://neo4j.com/)
 [![Security: AES--GCM 256](https://img.shields.io/badge/Security-AES--GCM%20256--bit-success.svg)](https://cryptography.io/)
 
-**MindSearch** is an enterprise-grade, 100% offline **GraphRAG (Knowledge Graph + Dense Vector RAG)** platform. Designed for air-gapped, privacy-sensitive environments (finance, legal, defense, healthcare), it removes cloud API dependencies and recurring token costs, and keeps documents on your own hardware.
+**▶ Demo video:** [watch the narrated walkthrough](https://nitinduttmajji-portfolio.netlify.app/projects/mindsearch/) (upload, access levels, a cited multi-hop answer, a blocked leak attempt). Original files: [Google Drive](https://drive.google.com/drive/folders/1y9MJixiNzN1oh6Vmlhvs36oWQpVo6SEL).
 
-By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, **MS-MARCO Cross-Encoder re-ranking**, and local **vLLM-served quantized LLMs**, MindSearch finds the second supporting passage that multi-hop questions need (measured on held-out HotpotQA questions: both needed passages reach the model 87% of the time versus 73% for a dense-only pipeline, see [Multi-hop retrieval](#multi-hop-retrieval-the-graphs-job))—with chunk text stored under **AES-GCM 256-bit encryption** and retrieval filtered by an **organization-configurable access policy** (clearance levels + departments) enforced on both the vector and graph queries. See [Security Model and Limits](#security-model-and-limits) for exactly what is and is not protected.
+**MindSearch** is a self-hosted, on-prem **GraphRAG (Knowledge Graph + Dense Vector RAG)** platform. Built for privacy-sensitive environments (finance, legal, healthcare), it runs every model on your own hardware, so documents and questions are never sent to a cloud AI service and there are no per-token API fees.
+
+By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, **MS-MARCO Cross-Encoder re-ranking**, and local **vLLM-served quantized LLMs**, MindSearch finds the second supporting passage that multi-hop questions need (measured on held-out HotpotQA questions: both needed passages reach the model 88% of the time versus 79% for hybrid search without the graph and 73% for the original dense-only pipeline, see [Multi-hop retrieval](#multi-hop-retrieval-the-graphs-job))—with chunk text stored under **AES-GCM 256-bit encryption** and retrieval filtered by an **organization-configurable access policy** (clearance levels + departments) enforced on both the vector and graph queries. See [Security Model and Limits](#security-model-and-limits) for exactly what is and is not protected.
 
 ---
 
@@ -26,9 +28,17 @@ By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, 
   - [3. Cross-Encoder Noise Filtering](#3-cross-encoder-noise-filtering)
   - [4. Guardrailed Generation](#4-guardrailed-generation)
 - [Empirical Metrics & Evaluation](#empirical-metrics--evaluation)
-  - [RAGAS Benchmark (SQuAD 2.0 Subset)](#ragas-benchmark-squad-20-subset)
+  - [Re-run after the code restructure](#re-run-after-the-code-restructure-2026-11-17)
+  - [SQuAD results (single-hop control)](#results-squad-v11-held-out-test-set-n100-generator-qwen25-7b-awq)
+  - [Hybrid retrieval and the embedder choice](#hybrid-retrieval-and-the-embedder-choice)
+  - [Multi-hop retrieval (the graph's job)](#multi-hop-retrieval-the-graphs-job)
+  - [Citations and "I don't know"](#citations-and-i-dont-know)
+  - [Observability](#observability)
+  - [Follow-up questions (multi-turn chat)](#follow-up-questions-multi-turn-chat)
+  - [Concurrency and load](#concurrency-and-load)
   - [Security & Encryption Latency](#security--encryption-latency)
 - [Key Outcomes](#key-outcomes)
+- [Configuration](#configuration)
 - [Security Model and Limits](#security-model-and-limits)
 - [Future Roadmap & Next Steps](#future-roadmap--next-steps)
 - [Quickstart & Setup](#quickstart--setup)
@@ -40,7 +50,7 @@ By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, 
 
 1. **Eliminate Vector Search Blind Spots (Multi-Hop GraphRAG):** Standard vector search struggles when information is scattered across non-contiguous paragraphs. MindSearch links every entity to the passages that mention it in Neo4j, follows those links from the entities in the question and in the best passages, and ranks the candidates with a small trained ranker (see Multi-hop retrieval below for the measured result and its limits).
 2. **Document-Level Security (encryption at rest + policy-driven access control):** Unauthorized text never reaches the LLM prompt, because it is filtered out at the database query level before the prompt is built. Chunk text is AES-GCM-256 encrypted and each ciphertext is bound to its record and access rule; identity comes from signed login tokens.
-3. **High-Throughput Offline Inference:** Maximize local GPU hardware utilization via **vLLM** (PagedAttention, Continuous Batching, and AWQ 4-bit quantization) with dual-engine offloading (CPU Ollama for extraction, GPU vLLM for chat).
+3. **High-Throughput Local Inference:** Maximize local GPU hardware utilization via **vLLM** (PagedAttention, Continuous Batching, and AWQ 4-bit quantization) Knowledge-graph extraction runs either on the same vLLM model (`KG_EXTRACTOR=vllm`, fast, GPU) or on a larger CPU model through Ollama (`KG_EXTRACTOR=ollama`, the default, slower).
 4. **Asynchronous Non-Blocking Scalability:** Decouple document parsing, embedding, and graph generation into background task queues using **Celery & Redis**.
 5. **Continuous Empirical Validation:** Rigorously validate context precision, recall, and faithfulness using an automated offline **RAGAS LLM-as-a-Judge** pipeline.
 
@@ -50,25 +60,25 @@ By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, 
 
 ```
                                   ┌──────────────────────────────┐
-                                  │   Streamlit Frontend / API   │
+                                  │     React Web UI / API       │
                                   └──────────────┬───────────────┘
                                                  │
                                                  ▼
                                      FastAPI Gateway (Port 8000)
                                       ├── Prometheus Instrumentator
-                                      └── Auth & Role Header (RBAC)
+                                      └── JWT Login + Access Policy
                                      /                            \
            [Ingest: Async / Non-Blocking]                    [Chat: Low-Latency Query]
                          │                                                │
                          ▼                                                ▼
              Celery Worker + Redis Queue                       RAG Pipeline Orchestrator
-             ├── Chunker (Paragraph-Aware)                                ├── Query Entity Extraction (SpaCy)
+             ├── Chunker + OCR (Tesseract)                                ├── Follow-up Rewrite + Entities
              ├── AES-GCM 256-bit Encryptor                                ├── Qdrant Vector Retrieval (RBAC Filter)
              ├── Embedder (all-MiniLM-L6-v2)                              ├── On-The-Fly Decryptor
-             └── Graph Builder (Ollama / SpaCy)                           ├── Neo4j Subgraph Extraction (1-2 Hop)
+             └── Graph Builder (LLM + spaCy)                              ├── Neo4j Subgraph Extraction (1-2 Hop)
                          │                                                ├── MS-MARCO Cross-Encoder Re-Ranking
-                         ▼                                                │   (Scored Dense Chunks + Filtered Triples)
-               ┌───────────────────┐                                      └── Structured XML Context Construction
+                         ▼                                                │   (Hybrid Pool Scored Once + Graph Hops)
+               ┌───────────────────┐                                      └── Refusal Gate + Numbered Passages
                │  Storage Layer    │                                                 │
                ├───────────────────┤                                                 ▼
                │ Qdrant Vector DB  │ ◄──────────────────────────────────── Local vLLM Inference Engine
@@ -92,33 +102,41 @@ MindSearch/
 ├── ruff.toml, LICENSE, README.md
 ├── prometheus/prometheus.yml       # Prometheus scrape configuration
 ├── samples/                        # Example documents
+├── demo_data/                      # The demo files: one per access level, plus a scanned memo (read with OCR)
 ├── docs/                           # Threat model; archive/ holds the pre-harness evaluation run cited above
 │
 ├── backend/
 │   ├── main.py, api.py             # uvicorn entry point; HTTP API: login, chat (SSE), ingest, documents, per-request authorization
-│   ├── settings.py                 # Central configuration: every model name, address and knob (35 settings, no secrets)
+│   ├── settings.py                 # Central configuration: every model name, address and knob (53 settings, no secrets)
 │   ├── auth.py, access_policy.py   # Signed tokens + scrypt; the one access rule compiled into Qdrant and Neo4j filters
 │   ├── org_policy.yaml, org_policies/   # Active policy and example policies (flat, hierarchy, departmental, matrix)
 │   ├── manage_users.py, uploads.py, ratelimit.py, audit.py   # Users CLI; safe uploads; login rate limiter; audit log
 │   ├── rag_pipeline.py, pipeline_config.py   # Config-driven pipeline and its presets (dense_only ... hybrid_graph_chunks)
-│   ├── chunker.py, embedder.py, sparse.py    # Chunking; dense + keyword (BM25-style, keyed ids) vectors in Qdrant
-│   ├── retriever.py, reranker.py   # Filtered retrieval, integrity-checked decryption, cross-encoder, dynamic cutoff
+│   ├── chat.py                     # One chat turn: plan or rewrite, search, refuse or answer, as typed events (the API only streams them)
+│   ├── chunker.py, embedder.py, sparse.py    # Chunking; the embedding model; BM25-style keyword vectors with keyed ids
+│   ├── chunk_store.py, vector_db.py   # The one place passages are stored and read: access filter, encryption, integrity check
+│   ├── retriever.py, reranker.py   # Search + cross-encoder re-ranking with a dynamic cutoff
 │   ├── graph_ranker.py             # Hop-aware ranker (learned weights) for multi-hop questions
 │   ├── kg_builder.py, kg_extractors.py   # Entity graph (entity-to-passage links), extraction with cache
 │   ├── conversation.py             # Follow-up rewriting and server-side history limits
+│   ├── agent.py                    # Optional search-as-a-tool strategy (CHAT_STRATEGY=agent), off by default
+│   ├── ocr.py                      # Local Tesseract OCR for scanned pages and pictures, with size and time limits
+│   ├── answers.py, budget.py       # 'I don't know' detection and citations; fitting the prompt into the model window
 │   ├── doc_identity.py, doc_registry.py  # Deterministic ids (idempotent ingestion); document registry
 │   ├── encryptor.py                # AES-GCM-256, key from environment, ciphertext bound to record + access rule
-│   ├── llm.py, worker.py           # vLLM client; Celery ingestion task
-│   ├── prepare_large_dataset.py, prepare_hotpot_dataset.py   # Build the SQuAD and HotpotQA evaluation sets
-│   ├── evaluation/                 # generate, judge, report, metrics, retrieval_bench, hop_tune, graph_diagnose, calibration, results/
+│   ├── ingestion.py, worker.py     # A document's life (queued, processing, done or failed); the Celery task that runs it
+│   ├── llm.py                      # vLLM client: prompts, streaming, tool calls
+│   ├── prepare_large_dataset.py, prepare_hotpot_dataset.py, prepare_unanswerable.py   # Build the SQuAD, HotpotQA and 'I don't know' sets
+│   ├── evaluation/                 # generate, judge, report, metrics, retrieval_bench, hop_tune, graph_diagnose, calibration,
+│   │                               #   ocr_eval (scanned pages), conversation_eval + prepare_conversations (multi-turn), results/
 │   ├── loadtest/                   # Concurrency load test and its results
-│   ├── tests/                      # 406 automated test cases (access control, auth, API, encryption, graph, metrics)
+│   ├── tests/                      # 615 automated tests (access control, auth, API, encryption, graph, OCR, chat, failure paths)
 │   ├── requirements*.txt, constraints.txt, .coveragerc, Dockerfile   # Pinned dependencies, full lock, coverage config
 │
-└── frontend/
-    ├── app.py                      # Streamlit UI: login, upload with access level/groups, documents, chat with sources
-    ├── Dockerfile
-    └── requirements.txt
+└── web/
+    ├── src/                        # React + TypeScript UI: login, upload with access level/groups, documents, chat with sources
+    ├── Dockerfile, nginx.conf      # nginx serves the built app and forwards /api to the API
+    └── package.json
 ```
 
 ---
@@ -126,11 +144,12 @@ MindSearch/
 ## How It Works (End-to-End Pipeline)
 
 ### 1. Asynchronous Ingestion & Graph ETL
-1. **Chunking (`chunker.py`):** Ingested documents (PDF, DOCX, TXT, Markdown) are split into passages of about 150 words with 20 words of overlap. Hard-wrapped PDF lines are re-flowed into sentences (and line-end hyphenation is repaired), paragraphs longer than a passage are cut at sentence boundaries, and every PDF passage keeps its page range so sources can say "page 3". Before this, 6-8% of passages exceeded the embedding model's 256-token limit (their tails were never searchable); now 0.2% do. The benchmark corpora (one whole passage per line) are chunked exactly as before (all 12,081 chunks identical), so earlier results are unaffected. Scanned PDFs need OCR, which is not built.
+1. **Chunking (`chunker.py`):** Ingested documents (PDF, DOCX, TXT, Markdown, and PNG/JPEG pictures) are split into passages of about 150 words with 20 words of overlap. Hard-wrapped PDF lines are re-flowed into sentences (and line-end hyphenation is repaired), paragraphs longer than a passage are cut at sentence boundaries, and every PDF passage keeps its page range so sources can say "page 3". Before this, 6-8% of passages exceeded the embedding model's 256-token limit (their tails were never searchable); now 0.2% do. The benchmark corpora (one whole passage per line) are chunked exactly as before (all 12,081 chunks identical), so earlier results are unaffected. Scanned pages are read with OCR (next paragraph).
+   **Scanned pages and pictures (`ocr.py`):** a PDF page that holds a picture but almost no text, a picture embedded in a Word file, and an uploaded image are read with **Tesseract OCR running locally in the worker container** (no cloud OCR, so documents never leave the machine). The text goes through the same chunking, encryption, access rule, graph building and delete path as typed text, and is cited as "page 3 (scanned)". A page read with low confidence is **reported** on the document ("could not read page 7") instead of being indexed as noise, and a file with no readable text is marked failed with the reason. Images are untrusted input, so pages per document, pixels per image and seconds per page are capped (`OCR_MAX_PAGES`, `OCR_MAX_PIXELS`, `OCR_PAGE_TIMEOUT_S`). Supported: printed text in scans and images. **Not** supported: handwriting, charts read as data, tables rebuilt as tables. **Measured** on 20 real scanned pages from DocVQA with 54 human-written questions (Tesseract 5.5.0, AMD Ryzen 9 8940HX CPU, no GPU): the answer appears in the indexed text for 0% of questions before OCR and **79.6%** after (page uploaded as a JPEG; 75.9% inside an image-only PDF), at about **1 second per page**. Misses are mostly numbers in charts, table cells and forms with dotted lines. The letter soup that dotted form lines turn into ('....sscceee') is removed by its shape; engine confidence was tested for this on separate pages and rejected, because it also removed real text. This measures the OCR text, not the chat's final answer (`python -m evaluation.ocr_eval`).
 2. **At-Rest Encryption (`encryptor.py`):** Each plaintext chunk is encrypted with **AES-GCM 256-bit** authenticated encryption before disk persistence.
-3. **Dense and keyword indexing (`embedder.py`, `sparse.py`):** Chunks become 384-dimensional dense vectors (`all-MiniLM-L6-v2`) and BM25-style keyword vectors. Both, the encrypted ciphertext and the document's access rule (level, groups, users) are stored in **Qdrant**.
+3. **Dense and keyword indexing (`chunk_store.py`, `embedder.py`, `sparse.py`):** Chunks become 384-dimensional dense vectors (`all-MiniLM-L6-v2`) and BM25-style keyword vectors. Both, the encrypted ciphertext and the document's access rule (level, groups, users) are stored in **Qdrant**.
 4. **Knowledge Graph Extraction (`kg_builder.py`):** Subject-relation-object facts are extracted by an LLM (Ollama or the vLLM model), named entities are also found directly in the text with spaCy, and everything is written to **Neo4j**: `Entity` nodes, relationship edges, and `MENTIONED_IN` links from each entity to the passages that mention it (plus passage titles as the "page" of an entity). Every edge carries the document's access rule.
-5. **Background Task Execution (`worker.py`):** FastAPI dispatches ingestion tasks directly to **Celery** via **Redis**, guaranteeing zero API request blocking or upload timeouts.
+5. **Background Task Execution (`ingestion.py`, `worker.py`):** FastAPI dispatches ingestion tasks directly to **Celery** via **Redis**, guaranteeing zero API request blocking or upload timeouts.
 
 ### 2. Hybrid GraphRAG Retrieval
 When a user submits a query:
@@ -138,13 +157,15 @@ When a user submits a query:
 - **On-the-Fly Decryption:** Retrieved ciphertext chunks are decrypted in-memory into plaintext.
 - **Graph-guided passage hops:** The graph links every entity to the passages that mention it. Entities named in the question and entities found in the best passages (the bridge) lead to other passages, and a hop-aware ranker picks the final four. The same access rule filters every graph step and the passage fetch from Qdrant.
 
+**Scored once.** With graph hops on, the cross-encoder used to score the search pool twice per question (once to pick the top passages, again inside the hop step). The search step now returns the score of every pool passage and the hop step reuses them, so about 20 of the roughly 55 passage scorings per question are gone, with identical scores (a test checks that the passages chosen are the same). Measured on the default preset: p95 time to first token at 20 simultaneous requests went from 24.9 s to 17.2 s with the same retrieval quality (see Concurrency and load).
+
 ### 3. Cross-Encoder Noise Filtering
 Raw graph queries often retrieve true-but-tangential facts that degrade answer precision. MindSearch passes both the decrypted document chunks and the graph triples through a **Cross-Encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`)**:
 - Assigns direct semantic relevance scores to `[query, chunk]` and `[query, graph_fact]` pairs.
-- Trims off-topic relationships, retaining the 3 highest-relevance graph facts and up to 3 document passages (fewer when the lower ones score far below the best, see the dynamic context cutoff below).
+- In the default preset the hop-aware ranker sends 4 passages and no graph facts (adding facts to the prompt was measured and gave no gain). The single-hop presets send up to 3 passages (fewer when the lower ones score far below the best, see the dynamic context cutoff below); `full_hybrid` also adds the 3 highest-scoring graph facts.
 
 ### 4. Guardrailed Generation
-The filtered context is structured using explicit XML boundary tags:
+The filtered context is structured using explicit XML boundary tags (the `<kg_fact>` lines appear only in the `full_hybrid` preset):
 ```xml
 Context:
 <doc id="1">Document passage 1...</doc>
@@ -175,7 +196,7 @@ Open issues and planned work are listed under [Future Roadmap](#future-roadmap--
 | Report | `evaluation/report.py` | Tables with 95% bootstrap CIs and paired differences between configs | No |
 
 - **Judge-free retrieval metrics are exact**: each question stores its gold passage(s), and a retrieved chunk counts only if it contains that passage text.
-- **Ablation configs** (`pipeline_config.py`): `dense_only`, `dense_rerank`, `full` (dense + rerank + knowledge graph).
+- **Ablation configs** (`pipeline_config.py`): from `dense_only` and `dense_rerank` up to `hybrid_rerank` and the default `hybrid_graph_chunks` (hybrid search, re-ranker, graph-guided hops); the file lists every preset.
 - **Clean index per run**: evaluation uses its own Qdrant index and encryption key (`qdrant_eval/`), rebuilt only when the corpus, chunking or embedder changes.
 - **Two datasets**: SQuAD v1.1 (single-hop control) and HotpotQA distractor (multi-hop, where the graph is supposed to help).
 - **Independent judge**: the 8 GB GPU cannot hold two models, so generation and judging are separate passes. `judge.py` stamps `self_judged: true` if the judge model equals the generator.
@@ -185,12 +206,29 @@ Open issues and planned work are listed under [Future Roadmap](#future-roadmap--
 python prepare_large_dataset.py && python prepare_hotpot_dataset.py
 python -m evaluation.generate --dataset squad  --config dense_only
 python -m evaluation.generate --dataset squad  --config dense_rerank
-python -m evaluation.generate --dataset hotpot --config hybrid_graph_chunks --reset-graph   # WIPES the connected Neo4j
+KG_EXTRACTOR=vllm python -m evaluation.generate --dataset hotpot --config hybrid_graph_chunks --reset-graph   # WIPES the connected Neo4j
 python prepare_hotpot_dataset.py --name hotpot_b --skip 200 --n 100        # the untouched held-out multi-hop set
 python -m evaluation.retrieval_bench --dataset squad_dev_xl --models all-MiniLM-L6-v2   # embedder / hybrid comparison
+python -m evaluation.ocr_eval fetch && python -m evaluation.ocr_eval run        # OCR on 20 real scanned pages
+python -m evaluation.prepare_conversations && python -m evaluation.conversation_eval   # 100 hand-written multi-turn chats
+python -m loadtest.chat_load --label <name> --levels 1,5,10,20   # latency under load (needs the running stack)
 python -m evaluation.judge --run-dir evaluation/results/<run_id> --judge-model <model> --judge-url <vLLM URL>
 python -m evaluation.report "evaluation/results/squad__*" --baseline dense_only
 ```
+
+### Re-run after the code restructure (2026-11-17)
+
+Every published number below was re-run on the same frozen sets with the same settings after the chat, storage and ingestion code was restructured, to check nothing regressed (runs tagged `rerun_20261117` in `backend/evaluation/results/`):
+
+| Benchmark | Published | Re-run |
+| :--- | :---: | :---: |
+| HotpotQA `hotpot_b`, both supporting passages in context: graph (default) / hybrid baseline | 0.87 / 0.79 | **0.88 / 0.79** |
+| SQuAD test, recall@3 / MRR: dense, + re-ranker, + dynamic context | 0.970/0.900, 1.000/0.967, 0.990/0.962 | identical |
+| 'I don't know' (`squad_unans_b`): refuses unanswerable / wrongly refuses valid | 89.8% / 4.9% | **89.8% / 3.9%** |
+
+Answers moved by at most 2 points, within their confidence intervals. On HotpotQA the graph's answer gain is +0.04 (CI -0.01 to +0.10) with today's 'I don't know' prompt and gate, so it is reported as positive but not conclusive; the retrieval gain (+0.09, CI +0.04 to +0.15) is clear.
+
+**Why two datasets.** SQuAD is single-hop (the answer is in one passage), so it is the control: a graph cannot help there, and it shows the graph does no harm while measuring search, re-ranking and refusal. HotpotQA is multi-hop (two linked passages), where the graph should help, so it carries the headline result.
 
 ### Results: SQuAD v1.1 held-out test set (n=100, generator Qwen2.5-7B-AWQ)
 
@@ -217,7 +255,7 @@ RAGAS, scored by an **independent judge** (Llama-3.1-8B-Instruct-AWQ, a differen
 What the paired per-question comparisons show (95% CI excludes 0 unless noted):
 - **Reranking helps:** +0.067 MRR (exact), +0.035 RAGAS precision. Recall@3 reaches 1.00. It costs about 300-400 ms per query on CPU.
 - **Dynamic context keeps quality and cuts cost.** The reranker's score decides how many passages to send (the best one plus any within 4 points of it), tuned on a separate dev set. Context drops from 410 to about 157 words and exact precision rises from 0.33 to 0.91, with answer correctness unchanged (contains-gold 0.88 to 0.90) and recall@3 0.99 vs 1.00 (one question). Paired RAGAS differences vs rerank-only: precision +0.012 ("dynamic") and +0.019 ("fast"), significant; recall, faithfulness and relevancy unchanged within noise. Speed (same session): retrieval about 310 ms to about 125 ms for the 10-candidate "fast" preset, and answer generation 1,678 ms to 762-886 ms because the prompt is shorter. The "fast" preset costs about 0.012 recall on the dev set.
-- **The graph changes judged faithfulness and precision, not correctness.** Versus rerank-only: faithfulness +0.077 (CI +0.022 to +0.134), precision -0.124, while recall, relevancy and answer correctness do not move (contains-gold -0.01, CI -0.06 to +0.03). Graph facts contained the gold answer for 36 of 100 questions, but the retrieved passages already contained it. SQuAD is single-hop, so it cannot show a graph benefit; a multi-hop benchmark (HotpotQA) is the intended test and is not run yet.
+- **The graph changes judged faithfulness and precision, not correctness.** Versus rerank-only: faithfulness +0.077 (CI +0.022 to +0.134), precision -0.124, while recall, relevancy and answer correctness do not move (contains-gold -0.01, CI -0.06 to +0.03). Graph facts contained the gold answer for 36 of 100 questions, but the retrieved passages already contained it. SQuAD is single-hop, so it cannot show a graph benefit; the multi-hop benchmark (HotpotQA, below) is where the graph is tested.
 - **RAGAS faithfulness is pessimistic here.** We hand-labelled 30 answers: humans judged 93% correct and 93% fully supported by the retrieved passage, while the 8B judge's faithfulness is 0.79. The judge agreed with the human 'supported' label on only 50% of items (it flagged 15 supported answers as unsupported and never passed a bad one). Treat the RAGAS numbers as a conservative lower bound, and trust differences between configs only where answer correctness agrees (the graph's judged-faithfulness gain does not coincide with any gain in correctness).
 - **Retrieval is saturated on this set:** the gold passage is already in the top 3 for 97% of questions before reranking. The harder 400-question dev set (`squad_dev`, used for tuning, never reported) has more headroom.
 
@@ -256,7 +294,7 @@ A single-hop question (SQuAD) needs one passage, so a graph cannot help; a multi
 
 **What the graph does.** At ingestion, every passage is linked to the entities it mentions (entities from LLM-extracted facts, named entities found directly in the text, and the passage's own leading title as the "page" of that entity). At query time the entities named in the question and those of the top passages (the bridge) lead to other passages; the cross-encoder score is combined with graph signals (how many question entities a passage covers; whether it is the page of a question entity or of a bridge entity) by a small logistic-regression ranker (`graph_ranker.py`, 5 weights, plain arithmetic at query time). Four passages are sent to the model instead of three.
 
-**Result on 100 held-out questions** (`hotpot_b`: never used to build, tune or choose anything; judge-free, paired bootstrap 95% CIs, `evaluation/results/hotpot_b__*`):
+**Result on 100 held-out questions** (`hotpot_b`: never used to build, tune or choose anything; judge-free, paired bootstrap 95% CIs, `evaluation/results/hotpot_b__*`; first measured 2026-10-11, re-run 2026-11-17 with 0.88 vs 0.79, see above):
 
 | Pipeline | Both supporting passages in context | Answer contains gold |
 | :--- | :---: | :---: |
@@ -318,14 +356,30 @@ What the pipeline metrics (`backend/metrics.py`) record:
 | `mindsearch_chat_requests_total{outcome}` | How requests end: `answered`, `abstained_model`, `refused_gate`, `no_context`, `failed` (HTTP 503), `interrupted` |
 | `mindsearch_decrypt_failures_total`, `mindsearch_invalid_citations_total` | Integrity and citation problems (should stay at 0) |
 | `mindsearch_ingest_documents_total{status}`, `..._chunks_total`, `..._seconds`, `mindsearch_kg_chunks_failed_total` | Worker: documents done / failed / retried, chunks written, time per document, graph extraction failures |
+| `mindsearch_ocr_pages_total{result}`, `mindsearch_ocr_page_seconds` | OCR: scanned pages read, unreadable or skipped, and seconds per page |
+| `mindsearch_rewrite_retries_total{result}`, `mindsearch_rewrite_failures_total{reason}` | Follow-ups searched again with a rewrite; rewrites that failed (the request then fails with HTTP 503) |
+| `mindsearch_agent_plans_total{result}`, `mindsearch_agent_queries_total` | Agent strategy only: search plans used or failed, and searches run |
 
 Labels are a small fixed set (never a user, query or document id), so the number of time series cannot grow with traffic and nothing sensitive leaks into metrics. `python grafana/build_dashboard.py` regenerates the dashboard JSON from one-line panel definitions.
 
-**What it showed on the first real run** (default preset, 1 to 10 concurrent simulated users, one machine): the model and the vector search are not the bottleneck. Averaged over the run, a request spent about 0.14 s embedding the question, 0.03 s in the vector search, 3.3 s in the cross-encoder re-ranking and 5.2 s in the graph stage (which re-ranks the larger candidate pool a second time), against about 4.2 s generating the answer. Time to first token was 1.7 s with one user, 8.9 s with five and 24 s with ten. **So the default (graph-aware, 4-passage) preset is much slower under load than the dense presets measured in the Concurrency section above;** the likely fixes (re-rank once instead of twice, a smaller candidate pool, more CPU workers) are not done yet. This was an observability check, not a benchmark: no controlled before/after was run.
+**What it showed on the first real run** (default preset, 1 to 10 concurrent simulated users, one machine): the model and the vector search are not the bottleneck. Averaged over the run, a request spent about 0.14 s embedding the question, 0.03 s in the vector search, 3.3 s in the cross-encoder re-ranking and 5.2 s in the graph stage (which re-ranks the larger candidate pool a second time), against about 4.2 s generating the answer. Time to first token was 1.7 s with one user, 8.9 s with five and 24 s with ten. **So the default (graph-aware, 4-passage) preset is much slower under load than the dense presets measured in the Concurrency section above;** Re-ranking once instead of twice has since been done and measured with a controlled before/after (see Concurrency and load: p95 at 20 simultaneous requests 24.9 s to 17.2 s); a smaller candidate pool and running the re-ranker on the GPU are the next candidates.
 
 ### Follow-up questions (multi-turn chat)
 
 A follow-up like "what about its price?" means nothing to a search engine that cannot see the chat. The server rewrites it into a standalone question using the recent history ("What is the price of the Contoso acquisition?") and retrieves with that; the UI shows it as "Searched for: ...". Limits are enforced on the server: the rewriter sees at most the last 6 messages (3 turns) and the answer model the last 4 (2 turns), both capped at about 700 tokens, with old answers shortened to 600 characters (all configurable: `HISTORY_MAX_MESSAGES`, `HISTORY_GENERATION_MESSAGES`, `HISTORY_TOKEN_BUDGET`, `HISTORY_PER_MESSAGE_CHARS`). Client-supplied `system` messages are dropped, and history never affects access control.
+
+**Optional: search as a tool (`CHAT_STRATEGY=agent`, off by default).** Instead of rewriting, the model is given one tool, `search_documents`, and must call it with the question made standalone and 1 to 3 search queries (one per thing the message asks about: "compare the refund policy with the warranty terms" becomes two searches). The server runs each query, interleaves the results so every topic keeps its best passage, and writes the answer from them; the UI shows the searches that ran. The tool's arguments are only search words: who is searching always comes from the login token, the arguments are validated (type, count, length), every call is audit-logged (as hashes), and a plan that fails (timeout, model error, unusable arguments) fails the turn with HTTP 503: there is deliberately no fallback to the rewrite strategy, because one hid that the model server had tool calling switched off. With `CHAT_STRATEGY=agent` the API also refuses to start if the model cannot make a tool call. It is one planning step, not a loop. It costs one extra model call per question. Measured on 100 hand-written multi-turn chats (below): it answers no better than the rewrite rule and takes about 1 s longer to decide, so it stays off.
+
+**Measured on 100 hand-written multi-turn chats** (`python -m evaluation.conversation_eval`, 2026-11-17; written by a person, not by the model under test; pronoun follow-ups, topic switches, vague requests like 'tell me more', a refusal in the middle, and follow-ups whose answer is not in the documents). Every chat goes through the real chat code:
+
+| Strategy | Answer contains gold (85 answerable) | Refuses exactly when it should (100) | Time to decide (p50) |
+| :--- | :---: | :---: | :---: |
+| Full question typed (upper bound) | 0.871 | 0.96 | 0.95 s |
+| No rewriting | 0.682 | 0.83 | 1.06 s |
+| **Rewrite when needed + retry (default)** | **0.871** | **0.94** | 1.36 s |
+| Model plans the searches (agent) | 0.824 | 0.94 | 2.40 s |
+
+Without rewriting, answers drop by 0.19 (95% CI -0.28 to -0.09), mostly on vague requests (0.80 vs 0.13). The default reaches the typed-question ceiling on this set, so the set cannot show gains above it; a harder, fresh set is the next step before claiming more.
 
 Measured on 332 synthetic follow-up chats from the SQuAD dev set (`python -m evaluation.followup`; retrieval metrics are exact, no LLM judge):
 
@@ -335,9 +389,19 @@ Measured on 332 synthetic follow-up chats from the SQuAD dev set (`python -m eva
 | **Raw follow-up, no rewriting** | **0.777** (0.732-0.819) | 0.720 |
 | Follow-up rewritten from history | **0.952** (0.928-0.973) | 0.931 |
 
-Rewriting raises recall@3 by +0.175 (95% CI +0.136 to +0.217) and is statistically indistinguishable from the original question (difference 0.006, CI -0.015 to +0.027). The rewrite costs about 250 ms (p50; p95 370 ms) once per follow-up and is skipped for a first question. Caveats: the same model writes the test follow-ups and performs the rewrite, and some generated follow-ups drift slightly in meaning, so treat this as a strong sanity check rather than a final benchmark. If the rewrite fails or times out, the original question is used.
+Rewriting raises recall@3 by +0.175 (95% CI +0.136 to +0.217) and is statistically indistinguishable from the original question (difference 0.006, CI -0.015 to +0.027). The rewrite costs about 250 ms (p50; p95 370 ms) once per follow-up and is skipped for a first question. Caveats: the same model writes the test follow-ups and performs the rewrite, and some generated follow-ups drift slightly in meaning, so treat this as a strong sanity check rather than a final benchmark. If a follow-up needs rewriting and the rewrite fails or times out, the request fails with HTTP 503 instead of quietly searching with the raw follow-up (see No silent fallbacks under the API reference).
 
 ### Concurrency and load
+
+**The default (graph) preset, before and after scoring the pool once (PERF-01, 2026-11-17).** With graph hops on, the search pool used to be scored by the cross-encoder twice per question; it is now scored once and the scores are reused. Same machine, same 107-passage corpus, runs in the order before, after, before, after (`RERANK_ONCE=0` switches the old behaviour back on for the test):
+
+| Simulated users | Time to first token p50 | p95 | Requests/s |
+| :---: | :---: | :---: | :---: |
+| 1 | 856 ms -> **608-618 ms** | 980 -> 711-811 ms | 0.73 -> 0.86 |
+| 10 | 6.9 s -> **3.6-3.9 s** | 10.8 -> 5.6-7.8 s | 0.87 -> 1.22-1.37 |
+| 20 | 20.1 s -> **12.2-12.4 s** | 24.9 -> **17.2 s** | 0.79 -> 1.10-1.12 |
+
+Retrieval quality is unchanged (HotpotQA both passages in context 0.88). This is the setting users get by default, so these, not the dense-preset numbers below, describe today's latency. The bottleneck at 20 users is still CPU work in retrieval (11.5 s server-side p50); the next candidates are running the re-ranker on the GPU and scoring a smaller pool. Note that '20 users' here means 20 requests in flight at once, each user asking again as soon as an answer ends; real users who stop to read put far less load on the server.
 
 Measured with `python -m loadtest.chat_load` (closed-loop simulated users, each sending 4 chat requests; SQuAD questions over an 87-chunk index; Qwen2.5-7B-AWQ on vLLM; RTX 5070 Laptop 8 GB, Ryzen 9 8940HX). Raw results are in `backend/loadtest/results/`. Each cell is **p95 time-to-first-token / throughput**.
 
@@ -375,15 +439,17 @@ Hardware: AMD Ryzen 9 8940HX, Python 3.11.7, Windows 11. Encryption cost is negl
 > **Status:** security claims are verified by automated tests, including attack tests; limits are listed under [Security Model and Limits](#security-model-and-limits). The multi-hop claim is now measured on a held-out set (see Multi-hop retrieval, with its limits). Observability is implemented and was verified live with real traffic (see Observability). Distributed tracing is not built.
 
 - 🛡️ **Policy-driven access control, verified:** one access rule (clearance levels + departments + super roles, defined per organization in `org_policy.yaml`) is compiled into both the Qdrant filter and the Neo4j filter. An exhaustive test checks every user against every document ACL for five organization structures and confirms both databases return exactly what the rule allows. Chunk text is AES-GCM-256 encrypted with a key kept outside the data, and ciphertext is bound to its record and ACL so database tampering cannot widen access. Limits (for example plaintext graph entity names, no built-in TLS) are listed under [Security Model and Limits](#security-model-and-limits).
-- ⚡ **Zero Token Costs & Complete Data Sovereignty:** 100% offline pipeline running on local NVIDIA GPUs. No confidential data ever leaves the on-premises perimeter.
-- 🧠 **Multi-hop retrieval via a knowledge graph:** both supporting passages reach the model for 87% of 100 held-out HotpotQA questions versus 73% for the previous dense pipeline (+14 points, 95% CI +8 to +21) and 79% for a hybrid baseline with the same four passages (+8 points, CI +3 to +14). Answer accuracy rises less (0.63 to 0.68; the model's ceiling with perfect passages is 0.81).
+- ⚡ **No Per-Token Fees & Data Stays On-Prem:** a self-hosted pipeline running on a local NVIDIA GPU. Documents and questions are processed on your own machines and never sent to a cloud AI service.
+- 🧠 **Multi-hop retrieval via a knowledge graph:** both supporting passages reach the model for 88% of 100 held-out HotpotQA questions (re-run 2026-11-17; 87% when first measured) versus 79% for a hybrid baseline with the same four passages (+9 points, 95% CI +4 to +15) and 73% for the original dense pipeline. Answer accuracy rises less (0.63 to 0.68 when first measured; the model's ceiling with perfect passages is 0.81).
+- 📄 **Scanned documents:** pages that are only pictures of text are read with local OCR; on 20 real scanned pages the answer appears in the indexed text for 79.6% of 54 questions (0% without OCR), at about 1 second per page, and answers cite them as 'page N (scanned)'.
+- 💬 **Follow-up questions:** on 100 hand-written multi-turn chats, rewriting follow-ups gets the right fact into 87% of answers, the same as typing the full question, against 68% without rewriting.
 - 📈 **Observability:** per-stage timings of every chat request (question embedding, vector search, decryption, re-ranking, graph hop, model), how each request ended (answered, refused, failed ...), ingestion counters, and an auto-provisioned Grafana dashboard; see [Observability](#observability).
 
 ---
 
 ## Configuration
 
-Every model name, service address, path and tuning knob is defined once in `backend/settings.py`, with its default and the environment variable that overrides it (for example `GENERATOR_MODEL`, `EMBEDDING_MODEL`, `RERANKER_MODEL`, `QDRANT_URL`, `PIPELINE_PRESET`, `RETRIEVAL_WORKERS`, `HISTORY_*`). The API, the Celery worker and the evaluation harness all read it, and each evaluation run saves the settings it ran with in `meta.json`, so a result can be traced back to its configuration. Secrets (database password, token-signing secret, data-encryption key) are kept out of that object on purpose and are read only where they are used, so dumping the configuration can never leak them. A test fails the build if a model name is hard-coded anywhere else. Note that changing `EMBEDDING_MODEL` requires re-indexing the documents.
+Every model name, service address, path and tuning knob is defined once in `backend/settings.py`, with its default and the environment variable that overrides it (for example `GENERATOR_MODEL`, `EMBEDDING_MODEL`, `RERANKER_MODEL`, `QDRANT_URL`, `PIPELINE_PRESET`, `RETRIEVAL_WORKERS`, `RERANK_ONCE`, `HISTORY_*`, `CHAT_STRATEGY`, `AGENT_*`, `OCR_*`). The API, the Celery worker and the evaluation harness all read it, and each evaluation run saves the settings it ran with in `meta.json`, so a result can be traced back to its configuration. Secrets (database password, token-signing secret, data-encryption key) are kept out of that object on purpose and are read only where they are used, so dumping the configuration can never leak them. A test fails the build if a model name is hard-coded anywhere else. Note that changing `EMBEDDING_MODEL` requires re-indexing the documents.
 
 ## Security Model and Limits
 
@@ -411,7 +477,7 @@ Planned next steps (items marked *done in v2* have already shipped):
 
 ### Phase 1: Ingestion Optimization & OCR Fallback
 - **Neo4j `UNWIND` Batch Ingestion (done in v2):** Transition from single-transaction Cypher insertions to parameterized batch `UNWIND` queries to accelerate Knowledge Graph construction by **10x–50x**.
-- **Automated OCR Fallback:** Detect image-only and low-character PDF uploads and dynamically route them through **Tesseract OCR** before chunking.
+- **OCR for scanned pages and pictures (built and measured):** image-only PDF pages, pictures inside Word files and uploaded images are read with local Tesseract before chunking, with confidence reporting and size limits. Measured: answer in the indexed text 0% before, 79.6% after, about 1 s per page; dotted-line junk is removed by shape. The chat answers from scans and cites them as 'page N (scanned)'. Remaining: a page-level signal for pages that are mostly noise.
 - **Entity lookup (done in v2):** `CONTAINS` string scans were replaced by exact, indexed entity keys.
 
 ### Phase 2: Enterprise Identity & Granular Multi-Tenant RBAC
@@ -463,16 +529,18 @@ docker compose up --build
 ```
 Every image and Python package version is pinned (`docker-compose.yml`, `backend/requirements*.txt`, `backend/constraints.txt`), so a build today matches the one that was measured. Each service has a health check and `depends_on` waits for it, so the API only starts once Redis, Neo4j, Qdrant and the model server are really ready (the first start downloads the model and takes several minutes). Memory limits are set per service. On Windows, Docker Desktop gets only half of the machine's RAM by default; the full stack (about 11 GB in use with the model loaded) is more comfortable with an explicit limit in `%UserProfile%\.wslconfig`, e.g. `[wsl2]` / `memory=24GB`, followed by `wsl --shutdown`.
 
+**Graph extraction model.** Building the knowledge graph needs a language model. With the default `KG_EXTRACTOR=ollama` it uses `qwen2.5:14b-instruct` through an Ollama server on the host (`ollama pull qwen2.5:14b-instruct`; runs on the CPU, slow, about 11 GB of RAM). Set `KG_EXTRACTOR=vllm` in `.env` to use the vLLM model that is already running instead (GPU, fast). If the chosen extractor cannot be reached, uploads are marked failed with that reason rather than stored without a graph.
+
 Sign in at the UI with the user you created. This starts (infrastructure ports listen on localhost only):
 - **FastAPI Gateway:** `http://localhost:8000`
-- **Streamlit UI:** `http://localhost:8501`
+- **Web UI:** `http://localhost:8080`
 - **Neo4j Browser:** `http://localhost:7474`
 - **vLLM Engine:** `http://localhost:8001`
 - **Prometheus:** `http://localhost:9090`
 - **Grafana:** `http://localhost:3000`
 
 ### Tests and CI
-Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. A dry run of these exact steps on a clean Linux container passed all 406 tests, and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
+Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, npm packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. Minor and patch updates are grouped into one pull request per ecosystem; major updates each get their own. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. The suite has 615 tests (all passing inside the worker container on 2026-11-17), and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
 ```bash
 ruff check .
 cd backend && python -m pytest tests -q --cov=. --cov-config=.coveragerc --cov-report=term
@@ -488,17 +556,17 @@ venv\Scripts\activate   # Windows
 
 # 2. Install dependencies
 pip install -r backend/requirements.txt -c backend/constraints.txt   # add requirements-eval.txt for the evaluation harness
-pip install -r frontend/requirements.txt
 
-# 3. Ensure local Neo4j and Ollama/vLLM instances are running
+# 3. Ensure local Neo4j, Qdrant, Redis and vLLM are running (and Ollama if KG_EXTRACTOR=ollama)
 
 # 4. Start Backend
 cd backend
 python -m uvicorn main:app --reload --port 8000
 
-# 5. Start Frontend
-cd ../frontend
-streamlit run app.py
+# 5. Start the web UI (http://localhost:5173; it forwards /api to the backend on port 8000)
+cd ../web
+npm install
+npm run dev
 ```
 
 ---
@@ -522,12 +590,11 @@ POST /v1/ingest
 Authorization: Bearer <token>
 Content-Type: multipart/form-data
 
-session_id: session-123
 level: Manager            (optional)
 groups: HR,Finance        (optional, comma separated)
 files: [financial_report_Q3.pdf]
 ```
-Allowed types: `.pdf .docx .txt .md`, up to 50 MB (`MAX_UPLOAD_MB`). Filenames are never used as paths.
+Allowed types: `.pdf .docx .txt .md .png .jpg .jpeg` (pictures and scanned pages are read with OCR), up to 50 MB (`MAX_UPLOAD_MB`). Filenames are never used as paths.
 
 **Response:**
 ```json
@@ -549,18 +616,17 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "model": "rag-model",
   "messages": [
     {"role": "user", "content": "What were the primary revenue drivers in Q3?"}
   ],
-  "stream": true,
-  "session_id": "session-123",
   "doc_ids": ["0c13..."]
 }
 ```
 `doc_ids` is optional: leave it out to search every document the user may read, or list up to 20 `doc_id`s to search only inside those (the file picker in the web UI). It can only narrow the search: the access rule is applied as well, so naming a document the user may not read finds nothing, not even a hint that it exists. The graph step is skipped for a scoped search, because graph hops can lead to passages of other documents.
 
-**Failures are errors, not answers.** If the language model is unreachable the request fails with **HTTP 503** and a short message (no internals leaked); if it dies after it has started answering, the stream carries a separate `{"error": "..."}` event, sends no `sources`, and still ends with `[DONE]`. The UI shows this as a warning, never as the model's answer, and the evaluation harness counts it as a failed generation instead of scoring it.
+**No silent fallbacks.** A step that cannot do its job fails visibly instead of quietly doing something weaker: a follow-up that needs rewriting while the model is down, too slow or returns nothing usable gives HTTP 503 (counted in `mindsearch_rewrite_failures_total{reason}`), not a search with the raw 'and its price?'; a failed agent search plan gives HTTP 503; a damaged PDF / Word file or a text file whose encoding cannot be detected reliably is marked failed with that reason (not stored as empty or with characters dropped; an ISO-8859-1 guess is read as Windows-1252, like browsers do); and a document whose knowledge-graph extraction fails for more than 25% of its passages (`KG_MAX_FAILURE_RATE`, typically the extraction model is not running) is marked failed with the counts and the first error, and whatever it had already written is removed so it is never searchable half-built. Every finished document keeps its extraction counts. A server without the OCR engine reports scanned pages as skipped on the document, rather than ignoring them.
+
+**Failures are errors, not answers.** If the language model is unreachable the request fails with **HTTP 503** and a short message (no internals leaked); if it dies after it has started answering, the stream carries a separate `{"type": "error", "message": "..."}` event, sends no `sources`, and still ends with `[DONE]`. The UI shows this as a warning, never as the model's answer, and the evaluation harness counts it as a failed generation instead of scoring it.
 
 **The prompt always fits the model.** Before generation the retrieved passages are trimmed to the space left in the model's context window (`MODEL_MAX_LEN`, which must match vLLM's `--max-model-len`) after the system prompt, the chat history, the question and room for the answer (`ANSWER_MAX_TOKENS`). The lowest-ranked passages go first, the best one is truncated rather than lost, and a warning is logged when anything is dropped. Tokens are estimated at 3 characters each; measured against the real Qwen tokenizer on 300 real prompts a token averages 4.3 characters (worst case 3.3), and the estimate was never below the true count, so it errs toward dropping slightly too much. Not covered: text with unusually short tokens (code, numbers, other languages) could use more tokens than estimated.
 
@@ -568,24 +634,30 @@ Content-Type: application/json
 ```http
 GET    /v1/documents                 # documents this user may read, newest first, with live status
 GET    /v1/documents/{doc_id}        # one document (404 if it does not exist OR the user may not read it)
+GET    /v1/documents/{doc_id}/passages?start=0&limit=5   # the document's indexed text, a few passages at a time ("view source")
 DELETE /v1/documents/{doc_id}        # removes chunks, graph facts and the registry entry
 Authorization: Bearer <token>
 ```
-Each entry has `doc_id`, `filename`, `status` (`queued`, `processing`, `done` or `failed`), `chunks`, `level`, `groups`, `uploaded_at` and, for whoever may delete the document, `uploaded_by`, and `can_delete` (the server's answer, so the UI never works the rule out itself). **Who can delete:** the uploader, an administrator (super role), or anyone of a **higher level than the uploader** (a manager can remove what an employee uploaded, never the other way round; equal levels cannot remove each other's; an uploader whose account no longer exists, or who is an administrator, can only be overruled by an administrator, whatever level the administrator has). Filenames and uploader names are stored encrypted. Deleting is idempotent and also removes graph entities no other document uses.
+**View source.** Clicking a source under an answer (or the eye button in the document list) opens the cited passage with the passage before and after it, read from `/passages` (`limit` up to 20). It returns `{doc_id, filename, total, start, passages: [{chunk_index, text, page, scanned?}]}`. It is the text **as indexed**, not a picture of the original page: the uploaded file is deleted after ingestion and only the encrypted passages are kept. Anyone who may read the document may view it, nobody else (an unknown document and a forbidden one both answer 404, and each passage goes through the same access filter as a search); every view is audit-logged with the document id only.
 
-**Conversation.** `messages` is the whole chat so far (newest last, up to 60). The server trims it and, for a follow-up, sends a first event `data: {"standalone_question": "..."}` showing what was actually searched for. A request whose last message is not from the user, or that is empty or oversized, gets HTTP 422.
+**Scanned documents.** An entry for a document that had scanned pages or pictures also carries `scan`: `{ocr_pages, unreadable_pages, unreadable_images, skipped, junk_removed}`, which the document list shows as "4 scanned pages read · could not read pages 2, 7".
+Each entry has `doc_id`, `filename`, `status` (`queued`, `processing`, `done` or `failed`), `chunks`, `level`, `groups`, `uploaded_at` and, for whoever may delete the document, `uploaded_by`, and `can_delete` (the server's answer, so the UI never works the rule out itself). **Who can delete:** an administrator (super role), or anyone of a **higher level than the uploader** who can also read the document. **The uploader cannot delete their own document** (someone might delete in anger or while resigning), equal or lower levels cannot remove each other's, and a document whose uploader no longer exists, is an administrator, or sits at the top level can only be removed by an administrator, whatever level the administrator has. The rule is chosen in the policy file with an optional `delete:` section: `mode: higher_levels` (the default) or `mode: admins_only`; an unknown mode or key stops the server at start-up, as does a policy with no administrator role (a single-level policy logs a warning, since then only administrators can delete). Each delete and each refusal is written to the audit log with the clause that decided it (`administrator`, `higher_level`, `uploader_cannot_delete_own`, `not_higher_level`, `uploader_is_administrator`, `uploader_unknown`, `admins_only`), and `GET /v1/policy` returns the rule in plain words (`delete_rule`) for the My access page. Changing the mode means editing the YAML and restarting; an admin page for it is future work (SEC-12 'Future'). The uploader still sees `uploaded_by` on their own document. Filenames and uploader names are stored encrypted. Deleting is idempotent and also removes graph entities no other document uses.
+
+**Conversation.** `messages` is the whole chat so far (newest last, up to 60). The server trims it and, for a follow-up, sends a first event `data: {"type": "standalone", "question": "..."}` showing what was actually searched for. A request whose last message is not from the user, or that is empty or oversized, gets HTTP 422.
+
+**Stream events.** Every `data:` frame is a JSON object that names its own `type`: `token` (a piece of the answer, in the OpenAI shape `choices[0].delta.content`), `outcome`, `standalone`, `searches`, `sources` and `error`; the stream ends with `data: [DONE]`. The `outcome` event says what kind of reply this is, `{"type": "outcome", "outcome": "answered" | "refused" | "none_found"}`: `refused` is an "I don't know" (from the refusal gate, or from the model, reported as soon as its first words show it) and `none_found` means nothing the user may read matched. The UI styles the reply from this event and never reads the answer text to guess it.
 
 **Sources in chat.** The chat stream ends with one extra event before `[DONE]`, listing the numbered passages the model was shown (one entry per passage, in the numbering the answer cites):
 ```
-data: {"sources": [{"n": 1, "doc_id": "0c13...", "filename": "board_memo.pdf", "chunk_index": 4, "page": 3, "cited": true}]}
+data: {"type": "sources", "sources": [{"n": 1, "doc_id": "0c13...", "filename": "board_memo.pdf", "chunk_index": 4, "page": 3, "cited": true}]}
 ```
-`n` is the citation number (`[1]` in the answer), `page` is the 1-based PDF page (null for other formats), and `cited` is true when the answer actually cites that passage. An "I don't know" answer, a refused question (gate) or an interrupted answer carries no `sources` event.
+`n` is the citation number (`[1]` in the answer), `page` is the 1-based PDF page (null for other formats), and `cited` is true when the answer actually cites that passage. A passage whose text was read by OCR also has `"scanned": true`. With `CHAT_STRATEGY=agent` and more than one search, an event `data: {"type": "searches", "queries": ["...", "..."]}` lists the searches that ran. An "I don't know" answer, a refused question (gate) or an interrupted answer carries no `sources` event.
 
 ---
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for details.
+All rights reserved. This repository is published for viewing and assessment only: no permission is granted to use, copy, modify or redistribute any part of it without written permission. See `LICENSE` for the full terms. Third-party packages, models and datasets keep their own licenses.
 
 ## Author
 
