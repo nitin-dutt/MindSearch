@@ -59,6 +59,10 @@ INVALID_CITATIONS = Counter("mindsearch_invalid_citations_total", "Citation numb
 INGEST_DOCUMENTS = Counter("mindsearch_ingest_documents_total", "Documents processed by the worker", ["status"])   # done, failed, retried
 INGEST_CHUNKS = Counter("mindsearch_ingest_chunks_total", "Chunks written by the worker")
 INGEST_SECONDS = Histogram("mindsearch_ingest_seconds", "Time to ingest one document", buckets=(0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600))
+# OCR (RET-06). read: text found with enough confidence; unreadable: low confidence, nothing found, timeout or too large;
+# skipped: not attempted (OCR off or not installed, or the per-document page limit was reached).
+OCR_PAGES = Counter("mindsearch_ocr_pages_total", "Scanned pages and pictures sent to OCR, by result", ["result"])
+OCR_SECONDS = Histogram("mindsearch_ocr_page_seconds", "Time the OCR engine spent on one page or picture", buckets=(0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60))
 KG_CHUNKS_FAILED = Counter("mindsearch_kg_chunks_failed_total", "Chunks whose graph extraction failed after retries")
 
 
