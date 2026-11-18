@@ -37,7 +37,7 @@ function inline(text: string, sources: Source[] | undefined, onCite: ((n: number
                 type="button"
                 onClick={() => onCite(n)}
                 aria-label={`Go to source ${n}`}
-                className="mx-0.5 inline-flex min-w-5 items-center justify-center rounded-md bg-accent-soft px-1 text-xs font-semibold text-accent hover:bg-accent hover:text-accent-ink"
+                className="mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded bg-accent-soft px-1 align-[1px] font-mono text-[11px] font-medium text-accent transition-colors hover:bg-accent hover:text-accent-ink"
               >
                 {n}
               </button>

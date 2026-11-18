@@ -27,7 +27,7 @@
   --bg: #0d1117; --panel: #161b22; --ink: #e6edf3; --muted: #8b949e; --line: #2a313c;
   --accent: #86d9b6; --accent-ink: #0b1f17; --accent-soft: #16302a;
   --brand: #86d9b6; --brand-ink: #0b1f17; --warm: #e7c4ab; --warm-ink: #3b2619;
-    --side-bg: #0a0e13; --side-ink: #e6edf3; --side-muted: #8b949e; --side-line: #222934; --side-accent: #86d9b6; --side-active: #16302a;
+  --side-bg: #0a0e13; --side-ink: #e6edf3; --side-muted: #8b949e; --side-line: #222934; --side-accent: #86d9b6; --side-active: #16302a;
   --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.02), 0 8px 24px -12px rgba(0, 0, 0, 0.65);
   --ok: #6fd09a; --ok-soft: #15301f; --warn: #e3b567; --warn-soft: #33290f; --danger: #f2878f; --danger-soft: #3a1e21;
   color-scheme: dark;
@@ -42,7 +42,7 @@
 }
 
 html, body, #root { height: 100%; }
-body { background-color: var(--bg); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; letter-spacing: -0.003em; }
+body { background-color: var(--bg); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; }
 /* Soft fills, not gradients: the main button, your own chat bubbles, the small number badges. */
 /* The sidebar has its own colours. Inside it the ordinary tokens are re-pointed, so every class used there (text-muted, border-line, text-accent, ...) follows. */
 .sidebar { background-color: var(--side-bg); --ink: var(--side-ink); --muted: var(--side-muted); --line: var(--side-line); --accent: var(--side-accent); --accent-soft: var(--side-active); color: var(--side-ink); }
@@ -50,7 +50,8 @@ body { background-color: var(--bg); color: var(--ink); font-family: var(--font-s
 .bg-brand { background-color: var(--brand); color: var(--brand-ink); }
 .shadow-card { box-shadow: var(--shadow-card); }
 .nav-active { position: relative; background-color: var(--accent-soft); }
-.nav-active::before { content: ""; position: absolute; left: -0.55rem; top: 0.45rem; bottom: 0.45rem; width: 3px; border-radius: 3px; background-color: var(--accent); }
+/* A 3px bar 8px left of the row, 8px in from its top and bottom (a 36px row gives a 20px bar). */
+.nav-active::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background-color: var(--accent); }
 /* In the base layer so utility classes such as outline-none can override it (unlayered CSS always wins over layers). */
 @layer base { :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; } }
 /* Upload effect: the document icon fills from the top, its lines draw one after another, and the mind logo gives a small pulse while it "reads". */

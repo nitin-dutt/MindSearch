@@ -35,10 +35,10 @@ export function LoginPage() {
         <div className="flex justify-center">
           <Brand />
         </div>
-        <form onSubmit={submit} className="space-y-4 rounded-2xl border border-line bg-panel p-6 shadow-card" aria-label="Sign in">
+        <form onSubmit={submit} className="space-y-6 rounded-2xl border border-line bg-panel p-6 shadow-card" aria-label="Sign in">
           <div>
             <h1 className="text-xl font-semibold">Sign in</h1>
-            <p className="mt-1 text-sm text-muted">Private, offline answers from your own documents.</p>
+            <p className="mt-1 text-sm text-muted">Private, self-hosted answers from your own documents.</p>
           </div>
           {(notice || error) && (
             <div role="alert" className="rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
@@ -53,25 +53,25 @@ export function LoginPage() {
               autoComplete="username"
               autoFocus
               required
-              className="mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm"
+              className="mt-2 h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm"
             />
           </label>
           <label className="block text-sm font-medium">
             Password
-            <div className="relative mt-1">
+            <div className="relative mt-2">
               <input
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 type={show ? "text" : "password"}
                 autoComplete="current-password"
                 required
-                className="w-full rounded-lg border border-line bg-bg px-3 py-2 pr-10 text-sm"
+                className="h-10 w-full rounded-lg border border-line bg-bg px-3 pr-10 text-sm"
               />
               <button
                 type="button"
                 onClick={() => setShow((s) => !s)}
                 aria-label={show ? "Hide password" : "Show password"}
-                className="absolute inset-y-0 right-2 text-muted hover:text-ink"
+                className="absolute right-1 top-1 grid size-8 place-items-center rounded-md text-muted transition-colors hover:text-ink"
               >
                 {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
@@ -82,7 +82,7 @@ export function LoginPage() {
           </Button>
         </form>
         <p className="flex items-center justify-center gap-1.5 text-xs text-muted">
-          <Lock className="size-3" aria-hidden /> Your role comes from your account, never from this page.
+          <Lock className="size-3.5" aria-hidden /> Your role comes from your account, never from this page.
         </p>
       </div>
     </div>
