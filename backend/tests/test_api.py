@@ -385,30 +385,49 @@ def test_malformed_document_ids_are_rejected(env):
     assert env.client.get("/v1/documents/" + "a" * 31, headers=h).status_code == 422
 
 
-def test_only_the_uploader_or_a_super_role_can_delete(env):
-    owner = env.login("mgr")
-    d = doc_id_of(upload(env, owner, data=b"manager upload", level="Staff"))       # readable by staff too
-    staff = env.login("staff")
-    assert env.client.get(f"/v1/documents/{d}", headers=staff).status_code == 200  # visible...
-    denied = env.client.delete(f"/v1/documents/{d}", headers=staff)
-    assert denied.status_code == 403 and env.rag.deleted == []                    # ...but not deletable by others
-    ok = env.client.delete(f"/v1/documents/{d}", headers=owner)
-    assert ok.status_code == 200 and ok.json()["status"] == "deleted" and env.rag.deleted == [d]
-    assert env.client.get(f"/v1/documents/{d}", headers=owner).status_code == 404
-
-
-def test_a_higher_level_can_delete_what_a_lower_level_uploaded_but_not_the_reverse(env):
+def test_the_uploader_cannot_delete_their_own_document_but_a_higher_level_can(env):
+    """SEC-12: deleting is for someone above the uploader. An uploader might delete their documents in anger or while resigning."""
     staff, mgr = env.login("staff"), env.login("mgr")
-    low = doc_id_of(upload(env, staff, data=b"staff upload", level="Staff"))
-    listed = env.client.get(f"/v1/documents/{low}", headers=mgr).json()
-    assert listed["can_delete"] is True and listed["uploaded_by"] == "staff"          # the manager sees it and who uploaded it
-    assert env.client.get(f"/v1/documents/{low}", headers=staff).json()["can_delete"] is True   # the uploader still can
-    assert env.client.delete(f"/v1/documents/{low}", headers=mgr).status_code == 200
-    high = doc_id_of(upload(env, mgr, data=b"manager upload", level="Staff", name="m.txt"))
+    d = doc_id_of(upload(env, staff, data=b"staff upload", level="Staff"))
+    mine = env.client.get(f"/v1/documents/{d}", headers=staff).json()
+    assert mine["can_delete"] is False and mine["uploaded_by"] == "staff"              # no delete button, but they still see it is theirs
+    assert env.client.delete(f"/v1/documents/{d}", headers=staff).status_code == 403 and env.rag.deleted == []
+    seen = env.client.get(f"/v1/documents/{d}", headers=mgr).json()
+    assert seen["can_delete"] is True and seen["uploaded_by"] == "staff"              # the manager sees it and who uploaded it
+    ok = env.client.delete(f"/v1/documents/{d}", headers=mgr)
+    assert ok.status_code == 200 and ok.json()["status"] == "deleted" and env.rag.deleted == [d]
+    assert env.client.get(f"/v1/documents/{d}", headers=mgr).status_code == 404
+
+
+def test_a_manager_cannot_delete_their_own_upload_and_staff_cannot_delete_a_managers(env):
+    staff, mgr = env.login("staff"), env.login("mgr")
+    high = doc_id_of(upload(env, mgr, data=b"manager upload", level="Staff", name="m.txt"))         # readable by staff too
+    assert env.client.get(f"/v1/documents/{high}", headers=mgr).json()["can_delete"] is False       # nobody above the manager but an admin
     seen = env.client.get(f"/v1/documents/{high}", headers=staff).json()
     assert seen["can_delete"] is False and "uploaded_by" not in seen                   # a lower level cannot, and is not told who
     assert env.client.delete(f"/v1/documents/{high}", headers=staff).status_code == 403
-    assert env.rag.deleted == [low]
+    assert env.client.delete(f"/v1/documents/{high}", headers=mgr).status_code == 403
+    assert env.rag.deleted == []
+    assert env.client.delete(f"/v1/documents/{high}", headers=env.login("root")).status_code == 200  # only an administrator can
+
+
+def test_every_delete_and_refusal_is_audited_with_the_clause_that_decided_it(env):
+    staff, mgr, root = env.login("staff"), env.login("mgr"), env.login("root")
+    d1 = doc_id_of(upload(env, staff, data=b"one", level="Staff"))
+    d2 = doc_id_of(upload(env, mgr, data=b"two", level="Staff"))
+    env.client.delete(f"/v1/documents/{d1}", headers=staff)                            # refused: the uploader
+    env.client.delete(f"/v1/documents/{d1}", headers=mgr)                              # allowed: higher level
+    env.client.delete(f"/v1/documents/{d2}", headers=staff)                            # refused: a lower level
+    env.client.delete(f"/v1/documents/{d2}", headers=root)                             # allowed: administrator
+    rows = [json.loads(line) for line in open(env.audit_path, encoding="utf-8")]
+    seen = [(r["event"], r["user"], r["doc_id"], r["rule"]) for r in rows if r["event"].startswith("document_delete")]
+    assert seen == [("document_delete_denied", "staff", d1, "uploader_cannot_delete_own"), ("document_delete", "mgr", d1, "higher_level"),
+                    ("document_delete_denied", "staff", d2, "not_higher_level"), ("document_delete", "root", d2, "administrator")]
+
+
+def test_the_policy_endpoint_explains_the_delete_rule_in_force(env):
+    rule = env.client.get("/v1/policy", headers=env.login("staff")).json()["delete_rule"]
+    assert rule["mode"] == "higher_levels" and "cannot delete their own document" in rule["text"]
 
 
 def test_an_administrators_upload_cannot_be_deleted_by_a_manager_even_if_the_admin_has_a_lower_level(env):

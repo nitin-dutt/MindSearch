@@ -15,7 +15,19 @@ THE rule, implemented once in can_access() and compiled into both database filte
 
 Qdrant (vector search) and Neo4j (graph traversal) filters are generated from this one place, so the
 two stores cannot disagree. Missing ACL data is denied (secure default).
+
+Deleting a document is a separate decision, made once in AccessPolicy.can_delete() (alignment_plan SEC-12). The uploader can NOT
+delete their own document (someone might do it in anger or on the way out of the company); deletion belongs to someone above them:
+
+    allowed  =  user is a super role (administrator)
+             OR ( mode is 'higher_levels'
+                  AND the uploader is a known, non-administrator user
+                  AND user.rank > the uploader's rank )
+
+and, before any of that, the caller must be allowed to READ the document (the API looks it up with the access filter first).
+The mode comes from the policy file's optional `delete:` section: `higher_levels` (the default) or `admins_only`.
 """
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -26,10 +38,21 @@ from qdrant_client.models import (FieldCondition, Filter, IsEmptyCondition, Matc
                                   PayloadField, Range)
 
 DEFAULT_POLICY_PATH = get_settings().org_policy_path
+log = logging.getLogger("mindsearch.security")
+
+DELETE_MODES = ("higher_levels", "admins_only")
+DEFAULT_DELETE_MODE = "higher_levels"
 
 
 class PolicyError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class DeleteDecision:
+    """The answer to 'may this user delete this document?', and WHICH clause decided it (written to the audit log)."""
+    allowed: bool
+    rule: str
 
 
 @dataclass(frozen=True)
@@ -61,9 +84,12 @@ def can_access(user: User, acl: DocACL) -> bool:
 
 
 class AccessPolicy:
-    def __init__(self, organization, levels, groups=(), super_roles=()):
+    def __init__(self, organization, levels, groups=(), super_roles=(), delete_mode=DEFAULT_DELETE_MODE):
         if not levels:
             raise PolicyError("a policy needs at least one level")
+        if delete_mode not in DELETE_MODES:
+            raise PolicyError(f"delete mode must be one of {', '.join(DELETE_MODES)}, got '{delete_mode}'")
+        self.delete_mode = delete_mode
         self.organization = organization
         self._levels = {str(n).casefold(): (str(n), int(r)) for n, r in levels}
         if len(self._levels) != len(levels):
@@ -78,7 +104,18 @@ class AccessPolicy:
             levels = [(lv["name"], lv["rank"]) for lv in data["levels"]]
         except (KeyError, TypeError) as e:
             raise PolicyError(f"policy 'levels' must be a list of {{name, rank}}: {e}") from e
-        return cls(data.get("organization", "unnamed"), levels, data.get("groups", []), data.get("super_roles", []))
+        delete = data.get("delete") or {}
+        if not isinstance(delete, dict) or set(delete) - {"mode"}:
+            raise PolicyError("policy 'delete' must be a section with only a 'mode' key (higher_levels or admins_only)")
+        if not data.get("super_roles"):
+            # Nobody could ever delete a document that its uploader's level cannot reach, and nobody could fix a mistake.
+            raise PolicyError("a policy needs at least one entry in 'super_roles' (an administrator role)")
+        policy = cls(data.get("organization", "unnamed"), levels, data.get("groups", []), data.get("super_roles", []),
+                     delete.get("mode", DEFAULT_DELETE_MODE))
+        if len(policy.level_names) == 1 and policy.delete_mode == "higher_levels":
+            log.warning("policy '%s' has a single level, so nobody is 'higher' than anybody: only administrators can delete documents",
+                        policy.organization)
+        return policy
 
     @classmethod
     def from_yaml(cls, path=None):
@@ -120,6 +157,31 @@ class AccessPolicy:
 
     def make_acl(self, level, groups=(), users=()) -> DocACL:
         return DocACL(min_rank=self.rank_of(level), groups=self._check_groups(groups), users=tuple(users or ()))
+
+    def can_delete(self, user: User, uploader: Optional[User]) -> DeleteDecision:
+        """May `user` delete a document that `uploader` uploaded? `uploader` is None when that account no longer exists.
+        The caller has already checked that `user` may read the document. Returns the decision and the clause behind it."""
+        if user.is_super:
+            return DeleteDecision(True, "administrator")
+        if self.delete_mode == "admins_only":
+            return DeleteDecision(False, "admins_only")
+        if uploader is None:
+            return DeleteDecision(False, "uploader_unknown")
+        if uploader.is_super:
+            return DeleteDecision(False, "uploader_is_administrator")
+        if user.id == uploader.id:
+            return DeleteDecision(False, "uploader_cannot_delete_own")
+        if user.rank > uploader.rank:
+            return DeleteDecision(True, "higher_level")
+        return DeleteDecision(False, "not_higher_level")
+
+    def delete_rule_text(self) -> str:
+        """The delete rule in force, in plain words (shown on the 'My access' page)."""
+        if self.delete_mode == "admins_only":
+            return "Only an administrator can delete a document. Nobody else can, including the person who uploaded it."
+        return ("A document can be deleted by an administrator, or by someone of a higher level than the person who uploaded it. "
+                "The uploader cannot delete their own document, and people of the same or a lower level cannot delete each other's. "
+                "A document uploaded by an administrator can only be deleted by an administrator.")
 
     def superuser(self) -> User:
         """Internal identity for jobs that must see everything (evaluation, migrations)."""
