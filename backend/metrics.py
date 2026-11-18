@@ -40,7 +40,7 @@ except ImportError:                                     # pragma: no cover - exe
 _BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60)
 
 # The pipeline stages of one chat request, in the order they happen.
-STAGES = ("rewrite", "embed_query", "vector_search", "decrypt", "rerank", "graph", "retrieve_total", "generation")
+STAGES = ("rewrite", "plan", "embed_query", "vector_search", "decrypt", "rerank", "graph", "retrieve_total", "generation")
 
 STAGE_SECONDS = Histogram("mindsearch_stage_seconds", "Time spent in one stage of a chat request", ["stage"], buckets=_BUCKETS)
 TTFT_SECONDS = Histogram("mindsearch_time_to_first_token_seconds",
@@ -78,6 +78,14 @@ def timed(stage: str):
 
 REWRITE_RETRIES = Counter("mindsearch_rewrite_retries_total",
                           "Searches repeated with a rewritten question after the first search found nothing usable", ["result"])
+# A follow-up that needed rewriting but the model failed (timeout / model_error / unusable_output): the turn failed with HTTP 503.
+REWRITE_FAILURES = Counter("mindsearch_rewrite_failures_total", "Follow-up rewrites that failed, by reason", ["reason"])
+
+
+# The agent strategy (CONV-06). used: the model's search plan was valid and ran; timeout / model_error / invalid_arguments: it was
+# not, and the chat turn failed with HTTP 503 (there is no fallback to the rewrite strategy).
+AGENT_PLANS = Counter("mindsearch_agent_plans_total", "Search plans asked of the model, by result", ["result"])
+AGENT_QUERIES = Counter("mindsearch_agent_queries_total", "Searches run from the model's search plans")
 
 
 def chat_outcome(outcome: str):

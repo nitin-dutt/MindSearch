@@ -84,6 +84,10 @@ class Settings:
     rerank_once: bool             # RERANK_ONCE=0 scores the search pool twice per question, as before PERF-01 (only for the before/after load test)
     rewrite_enabled: bool         # REWRITE_ENABLED: follow-up question rewriting
     rewrite_timeout_s: float      # REWRITE_TIMEOUT_S
+    chat_strategy: str            # CHAT_STRATEGY: rewrite (one search with a rewritten follow-up) or agent (the model plans 1-3 searches, agent.py)
+    agent_max_queries: int        # AGENT_MAX_QUERIES: most searches one question may trigger
+    agent_max_passages: int       # AGENT_MAX_PASSAGES: most passages shown to the model after merging several searches
+    agent_timeout_s: float        # AGENT_TIMEOUT_S: seconds the planning call may take before falling back to the rewrite strategy
     prompt_profile: str           # PROMPT_PROFILE: enterprise (citations, "I don't know", no length cap) or benchmark (the original 1-2 sentence prompt)
     model_max_len: int            # MODEL_MAX_LEN: the context window the language model is served with (match vLLM --max-model-len)
     answer_max_tokens: int        # ANSWER_MAX_TOKENS: longest answer the model may write; the prompt budget leaves room for it
@@ -149,6 +153,10 @@ class Settings:
             rerank_once=_str(env, "RERANK_ONCE", "1") == "1",
             rewrite_enabled=_str(env, "REWRITE_ENABLED", "1") == "1",
             rewrite_timeout_s=_float(env, "REWRITE_TIMEOUT_S", 6.0),
+            chat_strategy=_str(env, "CHAT_STRATEGY", "rewrite").lower(),
+            agent_max_queries=_int(env, "AGENT_MAX_QUERIES", 3),
+            agent_max_passages=_int(env, "AGENT_MAX_PASSAGES", 6),
+            agent_timeout_s=_float(env, "AGENT_TIMEOUT_S", 8.0),
             prompt_profile=_str(env, "PROMPT_PROFILE", "enterprise").lower(),
             model_max_len=_int(env, "MODEL_MAX_LEN", 8192),
             answer_max_tokens=_int(env, "ANSWER_MAX_TOKENS", 1024),
@@ -185,6 +193,16 @@ class Settings:
             raise ConfigError(f"PROMPT_PROFILE must be 'enterprise', 'enterprise_v3' or 'benchmark', got '{self.prompt_profile}'")
         if self.model_max_len < self.answer_max_tokens + 1024:
             raise ConfigError("MODEL_MAX_LEN must leave at least 1024 tokens of room for the prompt beyond ANSWER_MAX_TOKENS")
+        if self.chat_strategy not in ("rewrite", "agent"):
+            raise ConfigError(f"CHAT_STRATEGY must be 'rewrite' or 'agent', got '{self.chat_strategy}'")
+        if not 1 <= self.agent_max_queries <= 5:
+            raise ConfigError("AGENT_MAX_QUERIES must be between 1 and 5")
+        if self.agent_max_passages < 1 or self.agent_timeout_s <= 0:
+            raise ConfigError("AGENT_MAX_PASSAGES must be at least 1 and AGENT_TIMEOUT_S must be positive")
+        if not 0 <= self.kg_max_failure_rate <= 1:
+            raise ConfigError("KG_MAX_FAILURE_RATE must be between 0 and 1")
+        if not 0 <= self.ocr_min_confidence <= 100:
+            raise ConfigError("OCR_MIN_CONFIDENCE must be between 0 and 100")
         for name in ("history_max_messages", "history_generation_messages", "history_per_message_chars", "torch_threads",
                      "kg_extract_workers", "ocr_min_chars", "ocr_max_pages"):
             if getattr(self, name) < 0:
