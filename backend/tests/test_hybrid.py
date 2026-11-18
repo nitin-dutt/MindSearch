@@ -10,7 +10,9 @@ pytest.importorskip("qdrant_client")
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 from qdrant_client.models import Distance, VectorParams  # noqa: E402
 
+import chunk_store  # noqa: E402
 import embedder  # noqa: E402
+import vector_db  # noqa: E402
 from access_policy import DocACL, get_default_policy  # noqa: E402
 from encryptor import Encryptor  # noqa: E402
 from pipeline_config import get_preset  # noqa: E402
@@ -81,7 +83,7 @@ def make(tmp_path):
 
     yield build
     for path in made:
-        embedder.close_qdrant_client(path)
+        vector_db.close_qdrant_client(path)
 
 
 def write(tmp_path, name, text):
@@ -135,30 +137,22 @@ def test_hybrid_and_dense_agree_when_the_question_has_no_keywords(make, tmp_path
     assert rag.retrieve("what is it?", EMPLOYEE).chunks            # all stop words: falls back to dense, still answers
 
 
-def test_hybrid_search_needs_the_key_for_the_keyword_index(make, tmp_path):
-    f = write(tmp_path, "d.md", "The Eiffel Tower is located in Paris.\n")
-    rag = make("hybrid_rerank")
-    rag.ingest_vectors(f, EVERYONE)
-    with pytest.raises(ValueError):
-        embedder.search_embeddings("Eiffel", EMPLOYEE, POLICY, rag.config.qdrant_path, "t", hybrid=True, encryptor=None)
-
-
 def test_the_stored_keyword_vector_does_not_contain_plain_words(make, tmp_path):
     f = write(tmp_path, "d.md", "Project Bluebird acquisition price is forty million.\n")
     rag = make("hybrid_rerank")
     rag.ingest_vectors(f, EVERYONE)
-    client = embedder.get_qdrant_client(rag.config.qdrant_path)
+    client = vector_db.get_qdrant_client(rag.config.qdrant_path)
     pts, _ = client.scroll("t", limit=5, with_vectors=True)
-    sparse_vec = pts[0].vector[embedder.KEYWORDS]
+    sparse_vec = pts[0].vector[chunk_store.KEYWORDS]
     plain = SP.SparseEncoder(b"\x00" * 32)                 # an attacker guessing the key / hashing words without it
     assert not set(sparse_vec.indices) & {plain.term_id(t) for t in SP.tokenize("bluebird acquisition price forty million")}
 
 
 def test_an_index_from_before_hybrid_search_fails_with_a_clear_message(make, tmp_path):
     path = str(tmp_path / "q")
-    client = embedder.get_qdrant_client(path)
+    client = vector_db.get_qdrant_client(path)
     client.create_collection("t", vectors_config=VectorParams(size=embedder.EMBEDDING_DIM, distance=Distance.COSINE))
     rag = make("hybrid_rerank")
     f = write(tmp_path, "d.md", "The Eiffel Tower is located in Paris.\n")
-    with pytest.raises(embedder.IndexSchemaError, match="Re-index"):
+    with pytest.raises(chunk_store.IndexSchemaError, match="Re-index"):
         rag.ingest_vectors(f, EVERYONE)

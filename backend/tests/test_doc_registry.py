@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 
 import doc_registry as R  # noqa: E402
 from access_policy import AccessPolicy  # noqa: E402
-from embedder import close_qdrant_client, get_qdrant_client  # noqa: E402
+from vector_db import close_qdrant_client, get_qdrant_client  # noqa: E402
 from encryptor import Encryptor  # noqa: E402
 
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

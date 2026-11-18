@@ -43,7 +43,8 @@ FINAL_KS = (1, 3)
 # ------------------------------------------------------------------ index
 
 def index_fingerprint(corpus_path, cfg):
-    from embedder import EMBEDDING_MODEL_NAME, EMBEDDING_DIM, PAYLOAD_SCHEMA_VERSION
+    from chunk_store import PAYLOAD_SCHEMA_VERSION
+    from embedder import EMBEDDING_MODEL_NAME, EMBEDDING_DIM
     h = hashlib.sha256()
     with open(corpus_path, "rb") as f:
         h.update(f.read())
@@ -56,7 +57,7 @@ def index_fingerprint(corpus_path, cfg):
 def build_pipeline(dataset, corpus_path, cfg, rebuild=False):
     """Return (pipeline, n_chunks, index_info) over a clean evaluation-only index."""
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    from embedder import close_qdrant_client, get_qdrant_client
+    from vector_db import close_qdrant_client, get_qdrant_client
     from encryptor import Encryptor
     from rag_pipeline import RAGPipeline
 

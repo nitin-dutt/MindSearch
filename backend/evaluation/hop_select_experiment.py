@@ -23,7 +23,7 @@ from evaluation import metrics as M
 from evaluation.datasets import load_dataset
 from evaluation.generate import build_pipeline
 from pipeline_config import get_preset
-from retriever import load_chunks, retrieve_detailed
+from retriever import retrieve_detailed
 
 
 def ce(reranker, pairs):
@@ -66,8 +66,8 @@ def main():
 
     for item in items:
         q, gold = item["question"], item["gold_passages"]
-        d = retrieve_detailed(q, cfg.qdrant_path, user, rag.policy, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
-                              reranker=None, encryptor=rag.encryptor, collection_name=cfg.collection,
+        d = retrieve_detailed(q, rag.store, user, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
+                              reranker=None,
                               hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool)
         pool, metas = d["pool"], d["pool_meta"]
         if not pool:
@@ -87,7 +87,7 @@ def main():
             have = {(c.get("doc_id"), c.get("chunk_index")) for c in base[:keep]}
             cand = {ref: ks for ref, ks in kg.chunk_refs_for_entities(seeds, user, cfg.graph_hub_limit).items() if ref not in have}
             best = sorted(cand, key=lambda ref: (-len(cand[ref]), ref))[:cfg.graph_chunk_pool]
-            texts = load_chunks(best, user, rag.policy, rag.encryptor, cfg.qdrant_path, cfg.collection)
+            texts = rag.store.fetch(best, user)
             ref_of = {t["chunk"]: (t["doc_id"], t["chunk_index"]) for t in texts}
             aug_q = [(f"{q} {', '.join(cand[ref_of[t['chunk']]][:args.max_bridge])}", t["chunk"]) for t in texts]
             for t, s in zip(texts, ce(rr, aug_q)):

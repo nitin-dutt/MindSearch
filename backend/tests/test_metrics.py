@@ -43,7 +43,7 @@ def test_a_retrieval_times_the_search_stages(tmp_path):
     pytest.importorskip("qdrant_client")
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-    import embedder
+    import vector_db
     from access_policy import DocACL, get_default_policy
     from encryptor import Encryptor
     from pipeline_config import get_preset
@@ -59,19 +59,33 @@ def test_a_retrieval_times_the_search_stages(tmp_path):
         rag.ingest_document(str(f), DocACL(min_rank=0))
         rag.retrieve("When does the cafeteria open?", get_default_policy().make_user("emp", "Employee"))
     finally:
-        embedder.close_qdrant_client(cfg.qdrant_path)
+        vector_db.close_qdrant_client(cfg.qdrant_path)
     for s in names:
         assert sample("mindsearch_stage_seconds_count", stage=s) > before[s], s
 
 
 def test_a_tampered_chunk_is_counted(tmp_path):
+    """Two passages are stored; someone with database access swaps the ciphertext of one for the other's. The swapped one fails
+    its integrity check: it is not served, and it is counted."""
+    pytest.importorskip("sentence_transformers")
+    pytest.importorskip("qdrant_client")
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+    import vector_db
+    from access_policy import DocACL, get_default_policy
+    from chunk_store import ChunkStore
     from encryptor import Encryptor
-    from retriever import decrypt_hits
 
-    enc = Encryptor(key=AESGCM.generate_key(bit_length=256))
-    good = enc.encrypt("fine", aad=b"a")
-    before = sample("mindsearch_decrypt_failures_total")
-    texts, _, _ = decrypt_hits([good, good], [b"a", b"WRONG"], [1.0, 0.5], [{}, {}], enc)
-    assert texts == ["fine"] and sample("mindsearch_decrypt_failures_total") == before + 1
+    policy, path = get_default_policy(), str(tmp_path / "q")
+    store = ChunkStore(path, "t", Encryptor(key=AESGCM.generate_key(bit_length=256)), policy)
+    user = policy.make_user("emp", "Employee")
+    try:
+        assert store.add(["fine", "also fine"], DocACL(min_rank=0), doc_id="d" * 32) == 2
+        client = vector_db.get_qdrant_client(path)
+        points, _ = client.scroll("t", limit=5, with_payload=True)
+        client.set_payload("t", payload={"chunk_data": points[1].payload["chunk_data"]}, points=[points[0].id])
+        before = sample("mindsearch_decrypt_failures_total")
+        texts = [p["chunk"] for p in store.fetch([("d" * 32, 0), ("d" * 32, 1)], user)]
+        assert len(texts) == 1 and sample("mindsearch_decrypt_failures_total") == before + 1
+    finally:
+        vector_db.close_qdrant_client(path)

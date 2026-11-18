@@ -22,7 +22,7 @@ from qdrant_client.models import (Distance, FieldCondition, Filter, MatchValue, 
 
 from access_policy import DocACL
 from doc_identity import _NAMESPACE
-from embedder import get_qdrant_client, is_server
+from vector_db import get_qdrant_client, is_server
 from encryptor import record_aad
 
 log = logging.getLogger("mindsearch.security")

@@ -38,8 +38,8 @@ def compute_features(args):
     cfg, user = rag.config, rag.policy.superuser()
     out = []
     for n, item in enumerate(items, 1):
-        d = retrieve_detailed(item["question"], cfg.qdrant_path, user, rag.policy, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
-                              reranker=None, encryptor=rag.encryptor, collection_name=cfg.collection,
+        d = retrieve_detailed(item["question"], rag.store, user, candidate_k=cfg.candidate_k, final_k=cfg.final_k,
+                              reranker=None,
                               hybrid=cfg.hybrid, hybrid_pool=cfg.hybrid_pool)
         cands, _ = rag.graph_candidates(item["question"], user, d)
         labels = [1 if M.coverage([c["chunk"]], item["gold_passages"])[0] else 0 for c in cands]
