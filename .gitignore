@@ -105,3 +105,12 @@ demo_credentials.txt
 
 # Personal study material (manual, exercises): local reference only
 study/
+
+# Playwright MCP browser output (page snapshots, console logs)
+.playwright-mcp/
+
+# Local database backups (may hold document data)
+backups/
+
+# Demo video renders and recordings (large; the published demo is linked in the README)
+demo_video/
