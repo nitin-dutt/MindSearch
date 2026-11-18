@@ -45,6 +45,43 @@ class RetrievalResult:
         best = self.chunks[0]
         return best.get("ce", best.get("score"))
 
+    @classmethod
+    def merge(cls, results, max_passages):
+        """One result from several searches of the same question (the agent strategy runs one search per topic, CONV-06).
+
+        The passages are interleaved: the best passage of every search first, then every search's second, and so on, so each topic
+        the question asks about keeps its best evidence instead of one topic's passages filling every slot. A passage found by two
+        searches is kept once. The search whose best passage scored highest goes first, so `top_relevance()` (and with it the
+        refusal gate) sees the best passage overall: the merged result is refused only if every search on its own would be."""
+        results = [r for r in results if r is not None]
+        if len(results) == 1:
+            return results[0]
+
+        def relevance(c):
+            return c.get("ce", c.get("score", 0.0))
+        lists = sorted((r.chunks for r in results if r.chunks), key=lambda chunks: -relevance(chunks[0]))
+        merged, seen = [], set()
+        for rank in range(max((len(chunks) for chunks in lists), default=0)):
+            for chunks in lists:
+                if rank < len(chunks):
+                    c = chunks[rank]
+                    key = (c.get("doc_id"), c.get("chunk_index")) if c.get("doc_id") is not None else c["chunk"]
+                    if key not in seen:
+                        seen.add(key)
+                        merged.append(c)
+        out = cls(chunks=merged[:max_passages])
+        facts = {}
+        for r in results:
+            for f in r.graph_facts:
+                facts.setdefault(f["chunk"], f)
+            out.dense_pool += r.dense_pool
+            out.graph_pool += r.graph_pool
+            for stage, ms in r.timings_ms.items():
+                out.timings_ms[stage] = out.timings_ms.get(stage, 0.0) + ms
+        out.graph_facts = sorted(facts.values(), key=lambda f: -f.get("score", 0.0))[:max((len(r.graph_facts) for r in results), default=0)]
+        out.graph_chunks_added = sum(1 for c in out.chunks if c.get("via_graph"))
+        return out
+
     def to_context(self):
         """Prompt-ready context strings: passages numbered <doc id="1">, <doc id="2"> ... (the numbers the model cites), then graph facts."""
         return ([f'<doc id="{n}">{r["chunk"]}</doc>' for n, r in enumerate(self.chunks, start=1)]

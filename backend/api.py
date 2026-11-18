@@ -283,7 +283,11 @@ def create_app_from_env() -> FastAPI:
     _set_torch_threads()
     from pipeline_config import get_preset
     # PIPELINE_PRESET picks the retrieval strategy: hybrid_graph_chunks (default), dense_rerank_dynamic, dense_rerank_fast, ...
-    app = create_app(RAGPipeline(get_preset(cfg.pipeline_preset)), users, auth.load_secret(),
-                     dispatch=_celery_dispatch)
+    rag = RAGPipeline(get_preset(cfg.pipeline_preset))
+    helpers = chat.model_helpers(rag.config.generator_model)
+    if helpers["planner"].enabled:
+        import agent
+        agent.check_tool_calling(helpers["planner"])   # CHAT_STRATEGY=agent: refuse to start if tool calling does not work
+    app = create_app(rag, users, auth.load_secret(), dispatch=_celery_dispatch, **helpers)
     Instrumentator().instrument(app).expose(app)
     return app

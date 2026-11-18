@@ -70,6 +70,8 @@ services:
       --quantization awq
       --gpu-memory-utilization 0.85 
       --max-model-len ${VLLM_MAX_LEN:-8192}
+      --enable-auto-tool-choice
+      --tool-call-parser ${VLLM_TOOL_PARSER:-hermes}
       --enforce-eager
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
@@ -91,6 +93,9 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - RETRIEVAL_WORKERS=${RETRIEVAL_WORKERS:-4}
       - PIPELINE_PRESET=${PIPELINE_PRESET:-hybrid_graph_chunks}
+      - RERANK_ONCE=${RERANK_ONCE:-1}            # 0 = score the pool twice, as before PERF-01 (only for the before/after load test)
+      # rewrite (default): one search with a rewritten follow-up. agent: the model plans 1-3 searches by calling a tool (backend/agent.py)
+      - CHAT_STRATEGY=${CHAT_STRATEGY:-rewrite}
       - MODEL_MAX_LEN=${VLLM_MAX_LEN:-8192}      # same value vLLM is started with: the prompt budget is computed from it
       - GENERATOR_MODEL=${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}   # the model vLLM serves (see vllm_engine); one setting for both
       - TOKENIZERS_PARALLELISM=false

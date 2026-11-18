@@ -105,6 +105,17 @@ async def stream_generate(model, query, context, history=None, today=None):
         raise LLMError(f"language model request failed ({type(e).__name__})") from e
 
 
+async def complete_tool_call(model, messages, tool, max_tokens=250):
+    """Make the model call `tool` (an OpenAI-style function definition) and return the raw JSON arguments it wrote ('' if it did not
+    call it). `tool_choice` names the function, so the server constrains the output to that function's argument schema: a small model
+    cannot wander off into prose. The arguments are still untrusted text; the caller validates them (agent.parse_plan)."""
+    response = await client.chat.completions.create(
+        model=model, messages=messages, tools=[tool], max_tokens=max_tokens, temperature=0.0,
+        tool_choice={"type": "function", "function": {"name": tool["function"]["name"]}})
+    calls = response.choices[0].message.tool_calls or []
+    return calls[0].function.arguments if calls else ""
+
+
 async def complete_chat(model, messages, max_tokens=100, temperature=0.0):
     """One non-streaming completion (used for short helper tasks such as rewriting a follow-up question)."""
     response = await client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens,
