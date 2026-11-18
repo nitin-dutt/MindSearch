@@ -64,7 +64,7 @@ describe("api client", () => {
   });
 
   it("passes an error event through to the caller", async () => {
-    mockApi({ "POST /v1/chat/completions": () => sse([tokenEvent("Par"), event({ error: "The answer was interrupted. Please try again." }), "data: [DONE]\n\n"]) });
+    mockApi({ "POST /v1/chat/completions": () => sse([tokenEvent("Par"), event({ type: "error", message: "The answer was interrupted. Please try again." }), "data: [DONE]\n\n"]) });
     const got: ChatEvent[] = [];
     await streamChat([{ role: "user", content: "hi" }], (e) => got.push(e));
     expect(got.find((e) => e.type === "error")).toBeTruthy();

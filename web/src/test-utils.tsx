@@ -23,7 +23,7 @@ export function sse(chunks: string[], status = 200) {
 }
 
 export const event = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
-export const tokenEvent = (text: string) => event({ choices: [{ delta: { content: text } }] });
+export const tokenEvent = (text: string) => event({ type: "token", choices: [{ delta: { content: text } }] });
 
 /** Replaces fetch with handlers keyed by "METHOD /path" (the /api prefix is stripped). Unmatched requests fail the test loudly. */
 export function mockApi(handlers: Record<string, Handler>) {

@@ -1,4 +1,4 @@
-import type { ChatEvent, Source } from "./types";
+import type { ChatEvent, ReplyKind, Source } from "./types";
 
 /**
  * The chat endpoint streams Server-Sent Events: lines like `data: {...}` separated by a blank line, ending with `data: [DONE]`.
@@ -23,6 +23,9 @@ export function parseSse(buffer: string): { events: ChatEvent[]; rest: string } 
   return { events, rest };
 }
 
+const REPLY_KINDS: readonly ReplyKind[] = ["answered", "refused", "none_found"];
+
+/** One frame as an event. The server names each frame's `type`; a frame of an unknown type (a newer server) is skipped. */
 function toEvent(data: string): ChatEvent | null {
   let obj: unknown;
   try {
@@ -32,12 +35,23 @@ function toEvent(data: string): ChatEvent | null {
   }
   if (typeof obj !== "object" || obj === null) return null;
   const o = obj as Record<string, unknown>;
-  if (Array.isArray(o.choices)) {
-    const delta = (o.choices[0] as { delta?: { content?: unknown } } | undefined)?.delta;
-    return typeof delta?.content === "string" && delta.content !== "" ? { type: "token", text: delta.content } : null;
+  switch (o.type) {
+    case "token": {
+      // token frames keep the OpenAI-style shape: choices[0].delta.content
+      const delta = Array.isArray(o.choices) ? (o.choices[0] as { delta?: { content?: unknown } } | undefined)?.delta : undefined;
+      return typeof delta?.content === "string" && delta.content !== "" ? { type: "token", text: delta.content } : null;
+    }
+    case "outcome":
+      return REPLY_KINDS.includes(o.outcome as ReplyKind) ? { type: "outcome", outcome: o.outcome as ReplyKind } : null;
+    case "standalone":
+      return typeof o.question === "string" ? { type: "standalone", question: o.question } : null;
+    case "searches":
+      return Array.isArray(o.queries) ? { type: "searches", queries: o.queries.filter((q): q is string => typeof q === "string") } : null;
+    case "sources":
+      return Array.isArray(o.sources) ? { type: "sources", sources: o.sources as Source[] } : null;
+    case "error":
+      return typeof o.message === "string" ? { type: "error", message: o.message } : null;
+    default:
+      return null;
   }
-  if (typeof o.standalone_question === "string") return { type: "standalone", question: o.standalone_question };
-  if (Array.isArray(o.sources)) return { type: "sources", sources: o.sources as Source[] };
-  if (typeof o.error === "string") return { type: "error", message: o.error };
-  return null;
 }

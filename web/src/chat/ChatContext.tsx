@@ -1,12 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError, streamChat } from "../api/client";
-import type { ChatEvent, ChatTurn, Source } from "../api/types";
+import type { ChatEvent, ChatTurn, ReplyKind, Source } from "../api/types";
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  kind?: ReplyKind; // on a reply: what the server says it is (an answer, an "I don't know", nothing found); unset until it says
   standalone?: string; // the question as it was actually searched for (a follow-up rewritten from the history)
+  searches?: string[]; // the separate searches that were run when the question covered several things
   sources?: Source[];
   error?: string; // the request or the answer failed; shown as a warning, never as the model's words
   streaming?: boolean;
@@ -68,7 +70,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const patch = (fn: (m: ChatMessage) => ChatMessage) => setMessages((all) => all.map((m) => (m.id === answerId ? fn(m) : m)));
     const onEvent = (e: ChatEvent) => {
       if (e.type === "token") patch((m) => ({ ...m, content: m.content + e.text }));
+      else if (e.type === "outcome") patch((m) => ({ ...m, kind: e.outcome }));
       else if (e.type === "standalone") patch((m) => ({ ...m, standalone: e.question }));
+      else if (e.type === "searches") patch((m) => ({ ...m, searches: e.queries }));
       else if (e.type === "sources") patch((m) => ({ ...m, sources: e.sources }));
       else if (e.type === "error") patch((m) => ({ ...m, error: e.message }));
     };

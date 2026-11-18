@@ -1,18 +1,4 @@
-import { answerKind, formatBytes, timeAgo } from "./format";
-
-describe("answerKind", () => {
-  it("recognises the I-don't-know sentence, also with a typographic apostrophe", () => {
-    expect(answerKind("I don't know based on the documents available to you.")).toBe("refusal");
-    expect(answerKind("I don’t know based on the documents available to you.")).toBe("refusal");
-  });
-  it("recognises the nothing-found message", () => {
-    expect(answerKind("I couldn't find any relevant information in the documents available to you. If you expected...")).toBe("none_found");
-  });
-  it("treats everything else, including text that merely mentions not knowing, as an answer", () => {
-    expect(answerKind("The report says nobody knows the price [1].")).toBe("answer");
-    expect(answerKind("")).toBe("answer");
-  });
-});
+import { formatBytes, timeAgo } from "./format";
 
 describe("formatting", () => {
   it("formats sizes", () => {
