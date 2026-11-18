@@ -168,24 +168,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  frontend:
-    build:
-      context: ./frontend
-    ports:
-      - "8501:8501"
-    environment:
-      - API_BASE_URL=http://api:8000
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5)"]
-      interval: 15s
-      timeout: 6s
-      retries: 5
-      start_period: 20s
-    mem_limit: 512m
-    depends_on:
-      api:
-        condition: service_healthy
-
   # The React UI (web/): nginx serves the built app and forwards /api to the API, so the browser talks to one address.
   # Bound to this machine only; to show it on another device use a temporary HTTPS tunnel to this one port (see README).
   web:

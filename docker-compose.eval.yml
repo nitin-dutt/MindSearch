@@ -1,4 +1,4 @@
-# Dev/evaluation overlay: run the already-built images against the CURRENT backend/ and frontend/ source,
+# Dev/evaluation overlay: run the already-built images against the CURRENT backend/ source,
 # so code changes are picked up without rebuilding (and without re-resolving unpinned dependencies).
 #
 #   docker compose -f docker-compose.yml -f docker-compose.eval.yml up -d vllm_engine neo4j redis api celery_worker
@@ -12,6 +12,3 @@ services:
   celery_worker:
     volumes:
       - ./backend:/app
-  frontend:
-    volumes:
-      - ./frontend:/app
