@@ -8,11 +8,8 @@ Security model (alignment_plan SEC-01, SEC-04, SEC-09):
   * Uploaded filenames are never used as paths; content is size- and signature-checked.
   * Logins are rate limited; logins, uploads, chats and denials are written to an audit log.
 """
-import datetime
-import functools
 import json
 import os
-import time
 from typing import List, Optional
 
 import anyio
@@ -21,9 +18,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 import auth
+import chat
 import conversation as conv
-from answers import ABSTAIN_MESSAGE, is_abstention, mark_cited
-import metrics
+from answers import ABSTAIN_MESSAGE  # noqa: F401 - part of this module's public names (tests and tools read it from here)
+from chat import NO_CONTEXT_MESSAGE  # noqa: F401
 from llm import LLMError
 from settings import get_settings
 from access_policy import PolicyError, User, can_access
@@ -31,12 +29,6 @@ from audit import AuditLog
 from ingestion import Ingestion, QueueUnavailable
 from ratelimit import RateLimiter
 from uploads import UploadError, safe_upload_path, validate_content
-
-NO_CONTEXT_MESSAGE = (
-    "I couldn't find any relevant information in the documents available to you. "
-    "If you expected an answer, check that the document has finished processing and that "
-    "your access level covers it."
-)
 
 
 class LoginRequest(BaseModel):
@@ -50,11 +42,8 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model: str = "rag-model"
     # The whole conversation so far, newest last. The server trims it (conversation.py); clients may send up to 60.
     messages: List[ChatMessage] = Field(min_length=1, max_length=60)
-    stream: bool = True
-    session_id: Optional[str] = None
     # Limit the search to these documents (the user picked a file). Access rules still apply on top: this can only narrow.
     doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
 
@@ -63,29 +52,25 @@ def _unauthorized(detail="Not authenticated"):
     return HTTPException(status_code=401, detail=detail, headers={"WWW-Authenticate": "Bearer"})
 
 
+def _sse(event: dict) -> str:
+    """One chat event (chat.py) as a Server-Sent Event. Every frame carries its `type`; a token frame also keeps the OpenAI-style
+    `choices` shape, so tools written for that format (the load test) read the answer text unchanged."""
+    if event["type"] == "token":
+        event = {"type": "token", "choices": [{"delta": {"content": event["text"]}}]}
+    return f"data: {json.dumps(event)}\n\n"
+
+
 def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads", dispatch=None,
                audit: AuditLog = None, login_limiter: RateLimiter = None, token_ttl=3600,
-               retrieval_workers=None, rewriter=None) -> FastAPI:
+               retrieval_workers=None, rewriter=None, planner=None) -> FastAPI:
+    """`rewriter` / `planner` are the chat helpers that need the language model (chat.model_helpers); without them every question is
+    searched once, as typed."""
     policy = rag.policy
-    if rewriter is None:
-        from llm import complete_chat
-        cfg = getattr(rag, "config", None)
-        rewriter = conv.QueryRewriter(getattr(cfg, "generator_model", ""), complete_chat,
-                                      enabled=cfg is not None and get_settings().rewrite_enabled,
-                                      timeout=get_settings().rewrite_timeout_s)
-    # Retrieval is CPU-heavy (embedding, cross-encoder, graph lookup). It runs in worker threads so the event
-    # loop stays free for streaming and health checks, and the pool is capped so a burst of users cannot
-    # oversubscribe the CPU (extra requests simply wait their turn).
-    workers = int(retrieval_workers or get_settings().retrieval_workers)
-    limiter_holder = []
-
-    def retrieval_limiter():
-        if not limiter_holder:                 # created lazily, inside the running event loop
-            limiter_holder.append(anyio.CapacityLimiter(workers))
-        return limiter_holder[0]
+    audit = audit or AuditLog()
+    chats = chat.ChatService(rag, audit, planner=planner, rewriter=rewriter, workers=retrieval_workers)
+    ingest = Ingestion(rag, dispatch)
     for rec in users.records():          # fail at startup, not at the first login, if users.yaml is inconsistent
         policy.make_user(rec.username, rec.level, rec.groups, rec.roles)
-    audit = audit or AuditLog()
     limiter = login_limiter or RateLimiter()
     os.makedirs(upload_dir, exist_ok=True)
 
@@ -148,118 +133,25 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
             question, history = conv.split_conversation(req.messages)
         except conv.ConversationError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        history = conv.trim_history(history)
-        t_request = time.perf_counter()
-        # A follow-up ("what about its price?") is rewritten into a standalone question; retrieval searches with that.
-        with metrics.timed("rewrite"):
-            user_query, rewritten = await rewriter.rewrite(history, question)
-        t0 = time.perf_counter()
-        scope = {"doc_ids": req.doc_ids} if req.doc_ids else {}
-        gate = getattr(rag, "should_abstain", None)
-
-        async def search(q):
-            return await anyio.to_thread.run_sync(functools.partial(rag.retrieve, q, user, **scope), limiter=retrieval_limiter())
-
-        result = await search(user_query)
-        context = result.to_context()
-        # A question that looked complete is searched as typed. If that finds nothing usable ("give a detailed list" means nothing without
-        # the chat) and there is history, rewrite it from the history and search once more, then use whichever search did better.
-        if history and not rewritten and (not context or (gate is not None and gate(result))):
-            retry_query, retry_changed = await rewriter.rewrite(history, question, force=True)
-            if retry_changed:
-                retry = await search(retry_query)
-                retry_ctx = retry.to_context()
-                helped = bool(retry_ctx) and not (gate is not None and gate(retry))
-                metrics.REWRITE_RETRIES.labels("helped" if helped else "no_help").inc()
-                if helped:
-                    user_query, rewritten, result, context = retry_query, True, retry, retry_ctx
-        retrieval_ms = (time.perf_counter() - t0) * 1000
-        metrics.STAGE_SECONDS.labels("retrieve_total").observe(retrieval_ms / 1000)
-        audit.log("chat", user=user.id, super_role=user.is_super, query=text_fingerprint(question),
-                  rewritten=rewritten, history_messages=len(history), context_items=len(context),
-                  scoped_docs=len(req.doc_ids or []))
-
-        # Nothing retrieved (empty index, or nothing this user may see): answer deterministically
-        # without calling the LLM, so it can't answer from thin air.
-        if not context:
-            metrics.chat_outcome("no_context")
-
-            async def empty_stream():
-                yield f"data: {json.dumps({'choices': [{'delta': {'content': NO_CONTEXT_MESSAGE}}]})}\n\n"
-                yield "data: [DONE]\n\n"
-            return StreamingResponse(empty_stream(), media_type="text/event-stream",
-                                     headers={"X-Retrieval-Ms": f"{retrieval_ms:.0f}"})
-
-        # The refusal gate: something was retrieved, but the best passage is too weakly related to the question to answer from.
-        # Say so deterministically instead of letting the model improvise from loosely related text.
-        if gate is not None and gate(result):
-            audit.log("chat_abstained", user=user.id, reason="low_relevance")
-            metrics.chat_outcome("refused_gate")
-
-            async def abstain_stream():
-                yield f"data: {json.dumps({'choices': [{'delta': {'content': ABSTAIN_MESSAGE}}]})}\n\n"
-                yield "data: [DONE]\n\n"
-            return StreamingResponse(abstain_stream(), media_type="text/event-stream",
-                                     headers={"X-Retrieval-Ms": f"{retrieval_ms:.0f}"})
-
-        # The passages the model is shown, numbered like the citations in its answer (filenames come from the registry; the chunk
-        # filter already guaranteed this user may read them).
-        sources = result.sources()
-        if sources:
-            names = await anyio.to_thread.run_sync(rag.registry.filenames, list({x["doc_id"] for x in sources}))
-            sources = [{**x, "filename": names.get(x["doc_id"], "(unknown)")} for x in sources]
-
-        # Ask for the first token BEFORE the response starts: if the model is down the client gets a real HTTP 503 instead of a
-        # 200 stream whose "answer" is an error message.
-        t_generation = time.perf_counter()
-        answer = rag.stream_answer(user_query, context, conv.for_generation(history), today=datetime.date.today())
+        # Everything about answering lives in chat.py. A model that cannot even start is a real HTTP failure, not a 200 stream
+        # whose "answer" is an error message.
         try:
-            first = await answer.__anext__()
-        except StopAsyncIteration:
-            first = None
+            turn = await chats.begin(history, question, user, req.doc_ids)
         except LLMError:
-            audit.log("chat_failed", user=user.id, reason="language_model_unavailable")
-            metrics.chat_outcome("failed")
             raise HTTPException(status_code=503, detail="The answer service is unavailable. Please try again in a moment.")
 
-        metrics.TTFT_SECONDS.observe(time.perf_counter() - t_request)
-
         async def event_stream():
-            if rewritten:
-                yield f"data: {json.dumps({'standalone_question': user_query})}\n\n"
-            failed, parts = False, []
-            try:
-                if first is not None:
-                    parts.append(first)
-                    yield f"data: {json.dumps({'choices': [{'delta': {'content': first}}]})}\n\n"
-                async for token in answer:
-                    parts.append(token)
-                    yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
-            except Exception as e:  # noqa: BLE001 - the stream has started, so the failure travels as an event
-                failed = True
-                audit.log("chat_failed", user=user.id, reason=type(e).__name__)
-                metrics.chat_outcome("interrupted")
-                yield f"data: {json.dumps({'error': 'The answer was interrupted. Please try again.'})}\n\n"
-            full = "".join(parts)
-            metrics.STAGE_SECONDS.labels("generation").observe(time.perf_counter() - t_generation)
-            if not failed:
-                metrics.chat_outcome("abstained_model" if is_abstention(full) else "answered")
-            if sources and not failed and not is_abstention(full):          # an 'I don't know' cites nothing
-                marked, info = mark_cited(sources, full)                      # `cited` = the [n] numbers the answer actually used
-                if info["invalid"]:
-                    audit.log("citation_invalid", user=user.id, numbers=info["invalid"])
-                    metrics.INVALID_CITATIONS.inc(len(info["invalid"]))
-                yield f"data: {json.dumps({'sources': marked})}\n\n"
+            async for event in turn.events():
+                yield _sse(event)
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream",
-                                 headers={"X-Retrieval-Ms": f"{retrieval_ms:.0f}"})
+                                 headers={"X-Retrieval-Ms": f"{turn.retrieval_ms:.0f}"})
 
     # ---------------------------------------------------------------- ingest
 
     @app.post("/v1/ingest")
     async def ingest_endpoint(
-        session_id: str = Form(...),
         files: List[UploadFile] = File(...),
         level: Optional[str] = Form(None),
         groups: str = Form(""),

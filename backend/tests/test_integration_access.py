@@ -74,7 +74,7 @@ def stack(tmp_path):
 
     root = login("root", "pw-root-123")
     for name, (data, acl) in DOCS.items():
-        r = client.post("/v1/ingest", headers=root, data={"session_id": "s", **acl},
+        r = client.post("/v1/ingest", headers=root, data=acl,
                         files=[("files", (name, io.BytesIO(data)))])
         assert r.status_code == 200, r.text
     yield type("S", (), dict(client=client, login=staticmethod(login), rag=rag))
@@ -127,7 +127,7 @@ def test_a_forged_role_header_gets_nowhere_even_with_real_data_loaded(stack):
 
 def test_a_user_cannot_plant_a_document_that_others_above_them_could_not_see_through_upload_rules(stack):
     plain = stack.login("plain", "pw-plain-123")
-    r = stack.client.post("/v1/ingest", headers=plain, data={"session_id": "s", "level": "Executive"},
+    r = stack.client.post("/v1/ingest", headers=plain, data={"level": "Executive"},
                           files=[("files", ("x.txt", io.BytesIO(b"hello there friend")))])
     assert r.status_code == 403
 
