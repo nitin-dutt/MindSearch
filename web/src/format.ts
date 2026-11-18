@@ -18,13 +18,3 @@ export function timeAgo(iso: string, now: Date = new Date()): string {
   if (abs < 86400 * 14) return RELATIVE.format(Math.round(seconds / 86400), "day");
   return then.toLocaleDateString("en", { year: "numeric", month: "short", day: "numeric" });
 }
-
-export const ABSTAIN_SENTENCE = "I don't know based on the documents available to you.";
-
-/** The three special things the system can say instead of an answer, recognised so the UI can show them differently. */
-export function answerKind(text: string): "answer" | "refusal" | "none_found" {
-  const norm = text.replace(/’/g, "'").trim().toLowerCase();
-  if (norm.includes(ABSTAIN_SENTENCE.toLowerCase()) || norm.startsWith("i don't know") || norm.startsWith("i do not know")) return "refusal";
-  if (norm.startsWith("i couldn't find any relevant information")) return "none_found";
-  return "answer";
-}
