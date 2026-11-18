@@ -46,7 +46,7 @@ def pct(values, p):
 
 
 async def one_request(client, base, headers, question):
-    payload = {"model": "rag-model", "stream": True, "messages": [{"role": "user", "content": question}]}
+    payload = {"messages": [{"role": "user", "content": question}]}
     t0, first, tokens = time.perf_counter(), None, 0
     try:
         async with client.stream("POST", f"{base}/v1/chat/completions", json=payload, headers=headers) as r:

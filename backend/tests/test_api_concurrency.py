@@ -28,6 +28,9 @@ class SlowRag:
         self.active = self.max_active = 0
         self._lock = threading.Lock()
 
+    def should_abstain(self, result):
+        return False
+
     def retrieve(self, query, user):
         with self._lock:
             self.active += 1

@@ -48,6 +48,19 @@ class FakeRag:
             srcs.append({"n": 2, "doc_id": self.source_doc_id, "chunk_index": 5, "page": 3})
         return SimpleNamespace(to_context=lambda: ctx, sources=lambda: srcs)
 
+    def should_abstain(self, result):
+        return False                          # the refusal gate is open unless a test closes it
+
+    def merge_results(self, results, max_passages):
+        """Several searches as one result: every search's context, in order (the real merge is tested in test_agent.py)."""
+        ctx = [c for r in results for c in r.to_context()][:max_passages]
+        srcs = [x for r in results for x in r.sources()][:1]
+        return SimpleNamespace(to_context=lambda: ctx, sources=lambda: srcs)
+
+    def read_passages(self, doc_id, user, start=0, limit=5):
+        self.viewed = getattr(self, "viewed", []) + [(doc_id, user.id, start, limit)]
+        return [{"chunk_index": i, "text": f"passage {i} of the document", "page": i + 1} for i in range(start, min(start + limit, 3))]
+
     def delete_document(self, doc_id):
         self.deleted.append(doc_id)
         self.registry.delete(doc_id)
@@ -100,7 +113,7 @@ def chat(env, headers=None):
 
 def test_every_protected_route_rejects_anonymous_requests(env):
     assert chat(env).status_code == 401
-    assert env.client.post("/v1/ingest", data={"session_id": "s"},
+    assert env.client.post("/v1/ingest",
                            files=[("files", ("a.txt", b"hi"))]).status_code == 401
     assert env.client.get("/v1/me").status_code == 401
     assert env.client.get("/v1/policy").status_code == 401
@@ -196,7 +209,7 @@ def test_me_and_policy_describe_what_the_user_may_do(env):
 # ----------------------------------------------------------------------- ingest
 
 def upload(env, headers, name="doc.txt", data=b"hello world", **form):
-    return env.client.post("/v1/ingest", headers=headers, data={"session_id": "s", **form},
+    return env.client.post("/v1/ingest", headers=headers, data=form,
                            files=[("files", (name, io.BytesIO(data)))])
 
 
@@ -260,7 +273,7 @@ def test_oversized_upload_is_rejected_with_413(env, monkeypatch):
 
 def test_one_bad_file_in_a_batch_saves_nothing(env):
     files = [("files", ("ok.txt", io.BytesIO(b"fine"))), ("files", ("bad.exe", io.BytesIO(b"MZ")))]
-    r = env.client.post("/v1/ingest", headers=env.login("staff"), data={"session_id": "s"}, files=files)
+    r = env.client.post("/v1/ingest", headers=env.login("staff"), files=files)
     assert r.status_code == 400 and env.dispatched == [] and os.listdir(env.upload_dir) == []
 
 
@@ -333,7 +346,7 @@ def test_failure_to_queue_the_job_marks_the_document_failed_and_returns_503(env,
                          audit=AuditLog(env.audit_path), login_limiter=RateLimiter(max_attempts=100))
     client = TestClient(app)
     tok = client.post("/v1/auth/login", json={"username": "staff", "password": "pw-staff"}).json()["access_token"]
-    r = client.post("/v1/ingest", headers={"Authorization": f"Bearer {tok}"}, data={"session_id": "s"},
+    r = client.post("/v1/ingest", headers={"Authorization": f"Bearer {tok}"},
                     files=[("files", ("x.txt", io.BytesIO(b"queue is down")))])
     assert r.status_code == 503
     [entry] = env.registry.list(env.rag.policy.superuser())
@@ -487,7 +500,7 @@ def test_a_follow_up_is_searched_as_a_standalone_question(env):
     assert r.status_code == 200
     assert env.rag.queries == ["What is the price of the Contoso acquisition?"]      # retrieval used the rewrite
     events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and line != "data: [DONE]"]
-    assert events[0] == {"standalone_question": "What is the price of the Contoso acquisition?"}
+    assert events[0] == {"type": "standalone", "question": "What is the price of the Contoso acquisition?"}
     assert rewriter.calls[0][1] == "what about its price?"                           # the rewriter saw the user's own words
 
 
@@ -507,7 +520,7 @@ def test_a_question_that_finds_nothing_is_retried_once_with_a_rewrite(env):
     client, h = multi_turn_app(env, rewriter)
     r = client.post("/v1/chat/completions", headers=h, json={"messages": DETAIL})
     assert env.rag.queries == ["give a detailed list", "give a detailed list of the refund policy"]       # as typed first, then the rewrite
-    assert "Hello" in r.text and '"standalone_question": "give a detailed list of the refund policy"' in r.text
+    assert "Hello" in r.text and '"question": "give a detailed list of the refund policy"' in r.text
 
 
 def test_a_question_that_works_as_typed_is_not_retried(env):
@@ -521,7 +534,7 @@ def test_if_the_retry_also_finds_nothing_the_original_no_context_answer_stands(e
     env.rag.empty_queries = {"give a detailed list", "give a detailed list of the refund policy"}
     client, h = multi_turn_app(env, SelfContainedRewriter("give a detailed list of the refund policy"))
     r = client.post("/v1/chat/completions", headers=h, json={"messages": DETAIL})
-    assert api.NO_CONTEXT_MESSAGE in r.text and "Hello" not in r.text and "standalone_question" not in r.text
+    assert api.NO_CONTEXT_MESSAGE in r.text and "Hello" not in r.text and '"standalone"' not in r.text
 
 
 def test_the_answer_writer_gets_the_earlier_questions_but_not_its_own_earlier_answers(env):
@@ -537,7 +550,7 @@ def test_a_first_question_is_not_rewritten_and_has_no_event(env):
     rewriter = StubRewriter()
     client, h = multi_turn_app(env, rewriter)
     r = client.post("/v1/chat/completions", headers=h, json={"messages": convo(("user", "hello there"))})
-    assert "standalone_question" not in r.text and env.rag.queries == ["hello there"]
+    assert '"standalone"' not in r.text and env.rag.queries == ["hello there"]
     assert env.rag.histories[0] == []
 
 
@@ -603,7 +616,7 @@ def test_a_model_that_dies_mid_answer_sends_an_error_event_and_no_sources(env):
     r = chat(env, env.login("staff"))
     assert r.status_code == 200
     events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and "[DONE]" not in line]
-    assert any("choices" in e for e in events) and any("error" in e for e in events)    # the partial text, then the error
+    assert any("choices" in e for e in events) and any(e["type"] == "error" for e in events)    # the partial text, then the error
     assert not any("sources" in e for e in events)                                       # an interrupted answer cites nothing
     assert r.text.rstrip().endswith("data: [DONE]") and "cut off" not in r.text           # the stream still ends cleanly
 
@@ -613,6 +626,28 @@ def test_a_model_that_dies_mid_answer_sends_an_error_event_and_no_sources(env):
 def sources_event(r):
     events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and "[DONE]" not in line]
     return next((e["sources"] for e in events if "sources" in e), None)
+
+
+def outcomes_of(r):
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and "[DONE]" not in line]
+    return [e["outcome"] for e in events if e["type"] == "outcome"]
+
+
+def test_every_event_is_typed_and_the_reply_kind_is_stated_not_guessed(env):
+    """The client styles a reply from the `outcome` event; it never has to read the answer text to tell a refusal from an answer."""
+    h = env.login("staff")
+    r = chat(env, h)
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and "[DONE]" not in line]
+    assert all("type" in e for e in events) and outcomes_of(r) == ["answered"]
+    env.rag.tokens = ("I don't ", "know based on the documents available to you.")
+    r = chat(env, h)
+    events = [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ") and "[DONE]" not in line]
+    assert outcomes_of(r) == ["refused"]                              # the model's own "I don't know"
+    assert [e["type"] for e in events].index("outcome") <= 2          # said as soon as the first words show it, not at the end
+    env.rag.context = False
+    assert outcomes_of(chat(env, h)) == ["none_found"]
+    env.rag.context, env.rag.fail = True, "mid"
+    assert outcomes_of(chat(env, h)) == []                            # an interrupted answer has no outcome, only an error
 
 
 def test_the_sources_event_marks_which_numbered_sources_the_answer_cited(env):
@@ -648,6 +683,7 @@ def test_the_refusal_gate_answers_without_calling_the_model(env):
     assert r.status_code == 200 and api.ABSTAIN_MESSAGE in r.text and "Hello" not in r.text
     assert env.rag.histories == []                                    # the language model was never asked
     assert sources_event(r) is None
+    assert outcomes_of(r) == ["refused"]                              # the client is told what kind of reply this is
     assert any('"chat_abstained"' in line for line in open(env.audit_path, encoding="utf-8"))
 
 

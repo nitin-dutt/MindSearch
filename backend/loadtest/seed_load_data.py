@@ -36,7 +36,7 @@ def points():
 
 
 def upload(headers, name, data, level):
-    r = requests.post(f"{API}/v1/ingest", headers=headers, data={"session_id": "seed", "level": level},
+    r = requests.post(f"{API}/v1/ingest", headers=headers, data={"level": level},
                       files=[("files", (name, io.BytesIO(data)))])
     r.raise_for_status()
 
