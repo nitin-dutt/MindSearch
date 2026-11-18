@@ -119,8 +119,6 @@ jobs:
           NEO4J_PASSWORD=x MINDSEARCH_JWT_SECRET=x MINDSEARCH_DATA_KEY=x docker compose config -q
       - name: Build the API/worker image
         run: docker build ./backend -t mindsearch-api:ci
-      - name: Build the frontend image
-        run: docker build ./frontend -t mindsearch-frontend:ci
       - name: Build the React UI image
         run: docker build ./web -t mindsearch-web:ci
       - name: Smoke-test the API image
