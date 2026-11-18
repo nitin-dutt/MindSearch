@@ -123,7 +123,8 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
         """Levels and groups this user may put on a document they upload."""
         levels = policy.level_names if user.is_super else [n for n in policy.level_names if policy.rank_of(n) <= user.rank]
         groups = list(policy.groups) if user.is_super else list(user.groups)
-        return {"levels": levels, "groups": groups, "default_level": policy.level_name(user.rank)}
+        return {"levels": levels, "groups": groups, "default_level": policy.level_name(user.rank),
+                "delete_rule": {"mode": policy.delete_mode, "text": policy.delete_rule_text()}}
 
     # ------------------------------------------------------------------ chat
 
@@ -197,23 +198,20 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
 
     DOC_ID = Path(..., pattern=r"^[0-9a-f]{32}$", description="document id")
 
-    def may_delete(user: User, entry) -> bool:
-        """Who can delete a document: a super role, the uploader, or someone of a HIGHER level than the uploader (a manager can remove
-        what an employee uploaded, never the other way round, and equals cannot remove each other's). The uploader's level is looked up
-        in the user store; an uploader who no longer exists, or who is a super role, can only be overruled by a super role."""
-        if user.is_super or entry.uploader == user.id:
-            return True
-        uploader = users.get(entry.uploader)
-        if uploader is None:
-            return False
-        if policy.make_user(uploader.username, uploader.level, uploader.groups, uploader.roles).is_super:
-            return False                          # an administrator's upload can only be removed by an administrator, whatever their level
-        return user.rank > policy.rank_of(uploader.level)
+    def delete_decision(user: User, entry):
+        """May `user` delete this document, and which clause says so (SEC-12; the rule lives in AccessPolicy.can_delete). The uploader's
+        level and roles are looked up in the user store, so an uploader whose account is gone counts as unknown. Evaluated once per
+        request, against the policy as it is loaded."""
+        record = users.get(entry.uploader)
+        uploader = policy.make_user(record.username, record.level, record.groups, record.roles) if record else None
+        return policy.can_delete(user, uploader)
 
     def public(entry, user: User) -> dict:
-        deletable = may_delete(user, entry)
-        out = entry.to_public(policy, include_uploader=deletable)       # people who may delete a document may see who uploaded it
-        out["can_delete"] = deletable
+        decision = delete_decision(user, entry)
+        # Whoever may delete a document sees who uploaded it, and so does the uploader (who has no delete button on it and would
+        # otherwise wonder why).
+        out = entry.to_public(policy, include_uploader=decision.allowed or entry.uploader == user.id)
+        out["can_delete"] = decision.allowed
         return out
 
     @app.get("/v1/documents")
@@ -231,15 +229,18 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
 
     @app.delete("/v1/documents/{doc_id}")
     async def delete_document(doc_id: str = DOC_ID, user: User = Depends(current_user)):
-        """Remove a document everywhere (chunks, graph facts, registry entry). Allowed for the uploader, a super role, or a higher level than the uploader."""
+        """Remove a document everywhere (chunks, graph facts, registry entry). Allowed for an administrator or someone of a higher level
+        than the uploader (the uploader cannot delete their own document); see AccessPolicy.can_delete. A caller who may not READ the
+        document gets the same 404 as for a missing one, before the delete rule is looked at."""
         entry = await anyio.to_thread.run_sync(rag.registry.get, doc_id, user)
         if entry is None:
             raise HTTPException(status_code=404, detail="Document not found")
-        if not may_delete(user, entry):
-            audit.log("document_delete_denied", user=user.id, doc_id=doc_id)
-            raise HTTPException(status_code=403, detail="Only the uploader, an administrator or someone of a higher level than the uploader can delete a document.")
+        decision = delete_decision(user, entry)
+        if not decision.allowed:
+            audit.log("document_delete_denied", user=user.id, doc_id=doc_id, rule=decision.rule)
+            raise HTTPException(status_code=403, detail="Only an administrator or someone of a higher level than the uploader can delete this document.")
         report = await anyio.to_thread.run_sync(rag.delete_document, doc_id)
-        audit.log("document_delete", user=user.id, super_role=user.is_super, doc_id=doc_id)
+        audit.log("document_delete", user=user.id, super_role=user.is_super, doc_id=doc_id, rule=decision.rule)
         return {"status": "deleted", "doc_id": doc_id, **report}
 
     return app

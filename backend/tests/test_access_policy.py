@@ -72,7 +72,7 @@ def test_malformed_policy_is_rejected():
     with pytest.raises(PolicyError):
         AccessPolicy.from_dict({"levels": "oops"})
     with pytest.raises(PolicyError):
-        AccessPolicy.from_dict({"levels": [{"name": "A", "rank": 1}, {"name": "a", "rank": 2}]})
+        AccessPolicy.from_dict({"levels": [{"name": "A", "rank": 1}, {"name": "a", "rank": 2}], "super_roles": ["Admin"]})
 
 
 # ------------------------- the database filter must agree with the rule, for every org
