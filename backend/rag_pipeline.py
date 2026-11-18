@@ -160,7 +160,11 @@ class RAGPipeline:
         pool, metas = detail["pool"], detail["pool_meta"]
         if not pool or self.reranker is None:
             return [], []
-        scored = self.reranker.rerank(query, pool, top_k=len(pool))          # best first, every pool item scored
+        # The search step has already scored every pool item with the cross-encoder; reuse those scores (PERF-01: the pool used to be
+        # scored twice per question). Only a caller that built `detail` without scores pays for a pass here, and RERANK_ONCE=0
+        # brings the old second pass back so the before/after load test runs the same code.
+        saved = detail.get("scored") if get_settings().rerank_once else None
+        scored = saved or self.reranker.rerank(query, pool, top_k=len(pool))    # best first, every pool item scored
         items = [{"chunk": r["chunk"], **metas[r["original_index"]], "ce": r["score"], "via_graph": 0,
                   "pool_rank": 1.0 / (1 + r["original_index"])} for r in scored]
         seed_refs = [(c["doc_id"], c["chunk_index"]) for c in items[:cfg.graph_seed_k]

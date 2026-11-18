@@ -81,6 +81,7 @@ class Settings:
     pipeline_preset: str          # PIPELINE_PRESET: retrieval strategy (see pipeline_config.PRESETS)
     retrieval_workers: int        # RETRIEVAL_WORKERS: concurrent retrievals
     torch_threads: int            # TORCH_THREADS: 0 = CPU cores divided by retrieval_workers
+    rerank_once: bool             # RERANK_ONCE=0 scores the search pool twice per question, as before PERF-01 (only for the before/after load test)
     rewrite_enabled: bool         # REWRITE_ENABLED: follow-up question rewriting
     rewrite_timeout_s: float      # REWRITE_TIMEOUT_S
     prompt_profile: str           # PROMPT_PROFILE: enterprise (citations, "I don't know", no length cap) or benchmark (the original 1-2 sentence prompt)
@@ -145,6 +146,7 @@ class Settings:
             pipeline_preset=_str(env, "PIPELINE_PRESET", "hybrid_graph_chunks"),
             retrieval_workers=_int(env, "RETRIEVAL_WORKERS", 4),
             torch_threads=_int(env, "TORCH_THREADS", 0),
+            rerank_once=_str(env, "RERANK_ONCE", "1") == "1",
             rewrite_enabled=_str(env, "REWRITE_ENABLED", "1") == "1",
             rewrite_timeout_s=_float(env, "REWRITE_TIMEOUT_S", 6.0),
             prompt_profile=_str(env, "PROMPT_PROFILE", "enterprise").lower(),
