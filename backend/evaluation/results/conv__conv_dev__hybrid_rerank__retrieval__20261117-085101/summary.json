@@ -1,0 +1,728 @@
+{
+  "n_chats": 100,
+  "config": "hybrid_rerank",
+  "retrieval_only": true,
+  "strategies": {
+    "standalone": {
+      "all": {
+        "gold@1": {
+          "mean": 0.9764705882352941,
+          "ci_low": 0.9411764705882353,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@3": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@5": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "right_outcome": {
+          "mean": 0.85,
+          "ci_low": 0.78,
+          "ci_high": 0.92,
+          "n": 100
+        },
+        "seconds_decided": {
+          "mean": 0.34575591315990095,
+          "ci_low": 0.32174581683986614,
+          "ci_high": 0.36995607651986573,
+          "n": 100
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.0,
+      "p95_seconds_decided": 0.6097383409996837,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "n": 15
+          }
+        }
+      }
+    },
+    "raw": {
+      "all": {
+        "gold@1": {
+          "mean": 0.7411764705882353,
+          "ci_low": 0.6470588235294118,
+          "ci_high": 0.8352941176470589,
+          "n": 85
+        },
+        "gold@3": {
+          "mean": 0.8,
+          "ci_low": 0.7058823529411765,
+          "ci_high": 0.8823529411764706,
+          "n": 85
+        },
+        "gold@5": {
+          "mean": 0.8,
+          "ci_low": 0.7058823529411765,
+          "ci_high": 0.8823529411764706,
+          "n": 85
+        },
+        "right_outcome": {
+          "mean": 0.85,
+          "ci_low": 0.78,
+          "ci_high": 0.92,
+          "n": 100
+        },
+        "seconds_decided": {
+          "mean": 0.36185727416997904,
+          "ci_low": 0.3339579392199266,
+          "ci_high": 0.3924179528301465,
+          "n": 100
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.0,
+      "p95_seconds_decided": 0.6510672399999748,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 0.9142857142857143,
+            "ci_low": 0.8285714285714286,
+            "ci_high": 1.0,
+            "n": 35
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": 0.2,
+            "ci_low": 0.0,
+            "ci_high": 0.4,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": 0.8666666666666667,
+            "ci_low": 0.6666666666666666,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "n": 15
+          }
+        }
+      }
+    },
+    "always": {
+      "all": {
+        "gold@1": {
+          "mean": 0.9764705882352941,
+          "ci_low": 0.9411764705882353,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@3": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@5": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "right_outcome": {
+          "mean": 0.85,
+          "ci_low": 0.78,
+          "ci_high": 0.92,
+          "n": 100
+        },
+        "seconds_decided": {
+          "mean": 0.9131270589999986,
+          "ci_low": 0.8095395451400691,
+          "ci_high": 1.0208827853599904,
+          "n": 100
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.8,
+      "p95_seconds_decided": 2.1976328159998957,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "n": 15
+          }
+        }
+      }
+    },
+    "needed_noretry": {
+      "all": {
+        "gold@1": {
+          "mean": 0.9647058823529412,
+          "ci_low": 0.9176470588235294,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@3": {
+          "mean": 0.9882352941176471,
+          "ci_low": 0.9647058823529412,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@5": {
+          "mean": 0.9882352941176471,
+          "ci_low": 0.9647058823529412,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "right_outcome": {
+          "mean": 0.85,
+          "ci_low": 0.78,
+          "ci_high": 0.92,
+          "n": 100
+        },
+        "seconds_decided": {
+          "mean": 0.8013302528098939,
+          "ci_low": 0.6982230266698207,
+          "ci_high": 0.909922145429864,
+          "n": 100
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.73,
+      "p95_seconds_decided": 2.0817432280000503,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": 0.9333333333333333,
+            "ci_low": 0.8,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "n": 15
+          }
+        }
+      }
+    },
+    "needed": {
+      "all": {
+        "gold@1": {
+          "mean": 0.9647058823529412,
+          "ci_low": 0.9176470588235294,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@3": {
+          "mean": 0.9882352941176471,
+          "ci_low": 0.9647058823529412,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@5": {
+          "mean": 0.9882352941176471,
+          "ci_low": 0.9647058823529412,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "right_outcome": {
+          "mean": 0.85,
+          "ci_low": 0.78,
+          "ci_high": 0.92,
+          "n": 100
+        },
+        "seconds_decided": {
+          "mean": 0.8528615631299544,
+          "ci_low": 0.7340462524100257,
+          "ci_high": 0.9903904659899854,
+          "n": 100
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.73,
+      "p95_seconds_decided": 2.262076408000212,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": 0.9333333333333333,
+            "ci_low": 0.8,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "n": 15
+          }
+        }
+      }
+    },
+    "agent": {
+      "all": {
+        "gold@1": {
+          "mean": 0.9647058823529412,
+          "ci_low": 0.9176470588235294,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@3": {
+          "mean": 0.9882352941176471,
+          "ci_low": 0.9647058823529412,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@5": {
+          "mean": 0.9882352941176471,
+          "ci_low": 0.9647058823529412,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "right_outcome": {
+          "mean": 0.85,
+          "ci_low": 0.78,
+          "ci_high": 0.92,
+          "n": 100
+        },
+        "seconds_decided": {
+          "mean": 2.0213802021700396,
+          "ci_low": 1.8552732669301257,
+          "ci_high": 2.206190351570076,
+          "n": 100
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.41,
+      "p95_seconds_decided": 3.5859985549996054,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 0.9714285714285714,
+            "ci_low": 0.9142857142857143,
+            "ci_high": 1.0,
+            "n": 35
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "n": 15
+          }
+        }
+      },
+      "plans": {
+        "used": 100,
+        "failed": 0,
+        "off": 0
+      }
+    }
+  },
+  "paired": {
+    "standalone minus needed: gold@3": {
+      "diff": 0.011764705882352941,
+      "ci_low": 0.0,
+      "ci_high": 0.03529411764705882,
+      "n": 85
+    },
+    "standalone minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 100
+    },
+    "raw minus needed: gold@3": {
+      "diff": -0.18823529411764706,
+      "ci_low": -0.2823529411764706,
+      "ci_high": -0.10588235294117647,
+      "n": 85
+    },
+    "raw minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 100
+    },
+    "always minus needed: gold@3": {
+      "diff": 0.011764705882352941,
+      "ci_low": 0.0,
+      "ci_high": 0.03529411764705882,
+      "n": 85
+    },
+    "always minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 100
+    },
+    "needed_noretry minus needed: gold@3": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 85
+    },
+    "needed_noretry minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 100
+    },
+    "agent minus needed: gold@3": {
+      "diff": 0.0,
+      "ci_low": -0.03529411764705882,
+      "ci_high": 0.03529411764705882,
+      "n": 85
+    },
+    "agent minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 100
+    }
+  }
+}
