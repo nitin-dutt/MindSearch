@@ -1,8 +1,10 @@
 FROM python:3.12-slim
 
-# System packages needed to compile a few Python dependencies
+# System packages: a compiler for a few Python dependencies, and Tesseract (the local OCR engine that reads scanned pages and
+# pictures, ocr.py; English language data is included, add e.g. tesseract-ocr-deu and set OCR_LANGUAGES=eng+deu for more).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -8,11 +8,11 @@ import uuid
 
 from settings import get_settings
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg"}   # pictures are read with OCR (RET-06)
 MAX_UPLOAD_BYTES = get_settings().max_upload_mb * 1024 * 1024
 
 # first bytes of real files of each binary type (a renamed .exe must not pass as a .pdf)
-_SIGNATURES = {".pdf": b"%PDF-", ".docx": b"PK\x03\x04"}
+_SIGNATURES = {".pdf": b"%PDF-", ".docx": b"PK\x03\x04", ".png": b"\x89PNG\r\n\x1a\n", ".jpg": b"\xff\xd8\xff", ".jpeg": b"\xff\xd8\xff"}
 
 
 class UploadError(ValueError):

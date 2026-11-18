@@ -13,7 +13,7 @@ plaintext because they are needed for filtering and display.
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -52,6 +52,7 @@ class DocumentEntry:
     filename: str = UNREADABLE
     uploader: str = UNREADABLE
     size: int = 0
+    scan: dict = field(default_factory=dict)      # the OCR report (chunker.ExtractionReport); empty when nothing was scanned
 
     def to_public(self, policy, include_uploader: bool) -> dict:
         level = policy.level_name(self.acl.min_rank)
@@ -60,6 +61,8 @@ class DocumentEntry:
                "level": level, "groups": list(self.acl.groups), "error": self.error}
         if include_uploader:
             out["uploaded_by"] = self.uploader
+        if self.scan:                               # only for documents that had scanned pages or pictures
+            out["scan"] = self.scan
         return out
 
 
@@ -86,7 +89,8 @@ class DocumentRegistry:
         p = point.payload
         acl = DocACL(min_rank=int(p["min_rank"]), groups=tuple(p.get("groups", ())), users=tuple(p.get("users", ())))
         entry = DocumentEntry(doc_id=p["doc_id"], status=p["status"], chunks=int(p.get("chunks", 0)),
-                              created_at=p["created_at"], updated_at=p["updated_at"], error=p.get("error"), acl=acl)
+                              created_at=p["created_at"], updated_at=p["updated_at"], error=p.get("error"), acl=acl,
+                              scan=p.get("scan") or {})
         try:
             meta = json.loads(self.encryptor.decrypt(bytes.fromhex(p["meta_enc"]), record_aad(point.id, acl.to_payload())))
             entry.filename, entry.uploader, entry.size = meta["filename"], meta["uploader"], int(meta.get("size", 0))
@@ -107,11 +111,19 @@ class DocumentRegistry:
         client.upsert(self.collection, [PointStruct(id=pid, vector=[0.0], payload=payload)], wait=True)
         return self.get(doc_id)
 
-    def set_status(self, doc_id: str, status: str, chunks: Optional[int] = None, error: Optional[str] = None):
+    def set_status(self, doc_id: str, status: str, chunks: Optional[int] = None, error: Optional[str] = None,
+                   scan: Optional[dict] = None, graph: Optional[dict] = None):
+        """`scan` is the OCR report of the document (which scanned pages were read, which could not be). Page numbers and counts
+        only, no document text, so it is stored in the clear like the status. A report with nothing in it is not stored.
+        `graph` is the knowledge-graph extraction summary (kg_extractors.ExtractionStats: counts, extractor name, first error type)."""
         assert status in STATUSES, status
         payload = {"status": status, "updated_at": _now(), "error": (error or None) if status == "failed" else None}
         if chunks is not None:
             payload["chunks"] = chunks
+        if scan is not None:
+            payload["scan"] = scan if any(scan.values()) else None
+        if graph is not None:
+            payload["graph"] = graph
         self._client().set_payload(self.collection, payload=payload, points=[registry_point_id(doc_id)], wait=True)
 
     def delete(self, doc_id: str):

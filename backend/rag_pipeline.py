@@ -33,7 +33,8 @@ class RetrievalResult:
     def sources(self):
         """One entry per passage the model was shown, numbered like the citations in its answer:
         [{"n", "doc_id", "chunk_index", "page"}]. `n` is the number in `<doc id="n">` (and in the answer's [n]); `page` is 1-based, PDFs only."""
-        return [{"n": n, "doc_id": r["doc_id"], "chunk_index": r.get("chunk_index"), "page": r.get("page")}
+        return [{"n": n, "doc_id": r["doc_id"], "chunk_index": r.get("chunk_index"), "page": r.get("page"),
+                 **({"scanned": True} if r.get("ocr") else {})}        # the text was read from a scanned page or a picture (OCR)
                 for n, r in enumerate(self.chunks, start=1) if r.get("doc_id")]
 
     def top_relevance(self):
@@ -78,12 +79,16 @@ class RAGPipeline:
 
     # ---------- ingestion ----------
 
-    def ingest_vectors(self, file_path, acl: DocACL, doc_id=None):
-        """Chunk -> embed -> encrypt (bound to record + ACL) -> index in Qdrant. Returns the plaintext chunks."""
+    def ingest_vectors(self, file_path, acl: DocACL, doc_id=None, report=None):
+        """Chunk -> embed -> encrypt (bound to record + ACL) -> index in Qdrant. Returns the plaintext chunks.
+        Scanned pages and pictures are read with OCR on the way (chunker.py); pass a dict as `report` to receive what OCR could and
+        could not read. A file with no readable text indexes nothing and returns []."""
         cfg = self.config
         doc_id = doc_id or compute_doc_id(file_path, acl)
-        chunks = run_chunking_with_pages(file_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap,
-                                         split_long=cfg.split_long_paragraphs)
+        chunks, extraction = chunk_document(file_path, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap,
+                                            split_long=cfg.split_long_paragraphs)
+        if report is not None:
+            report.update(extraction.to_dict())
         plaintext_chunks = [c.text for c in chunks]
         self.store.add(plaintext_chunks, acl, doc_id=doc_id, pages=[(c.page_start, c.page_end) for c in chunks],
                        ocr_flags=[c.ocr for c in chunks])

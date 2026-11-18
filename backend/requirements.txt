@@ -12,6 +12,11 @@ prometheus-client==0.26.0
 nltk==3.10.3
 python-docx==1.2.0
 pdfplumber==0.11.10
+# OCR for scanned pages and pictures (ocr.py). pytesseract only drives the local `tesseract` program, which the Docker image
+# installs with apt; pypdfium2 (page rendering) and pillow were already installed as dependencies of pdfplumber.
+pytesseract==0.3.13
+pypdfium2==5.13.0
+pillow==13.0.0
 chardet==7.6.0
 requests==2.34.2
 aiohttp==3.14.4

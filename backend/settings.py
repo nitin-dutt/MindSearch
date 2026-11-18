@@ -93,6 +93,15 @@ class Settings:
     history_per_message_chars: int    # HISTORY_PER_MESSAGE_CHARS
     max_upload_mb: int            # MAX_UPLOAD_MB
     keep_uploads: bool            # KEEP_UPLOADS=1 keeps the plaintext upload after ingestion (debugging only)
+    # ---- OCR for scanned pages and pictures (ocr.py)
+    ocr_enabled: bool             # OCR_ENABLED=0 switches OCR off (scanned pages are then reported as not read)
+    ocr_languages: str            # OCR_LANGUAGES: Tesseract language codes, e.g. eng or eng+deu (the language data must be installed)
+    ocr_min_chars: int            # OCR_MIN_CHARS: a PDF page with a picture and fewer extractable characters than this is treated as scanned
+    ocr_min_confidence: float     # OCR_MIN_CONFIDENCE: 0-100; a page read with lower average confidence is reported, not indexed
+    ocr_dpi: int                  # OCR_DPI: resolution a scanned page is rendered at before it is read
+    ocr_max_pages: int            # OCR_MAX_PAGES: most pages/pictures of ONE document that are sent to OCR
+    ocr_max_pixels: int           # OCR_MAX_PIXELS: largest image that is decoded or rendered (bigger pages are scaled down, bigger pictures skipped)
+    ocr_page_timeout_s: float     # OCR_PAGE_TIMEOUT_S: seconds the engine may spend on one page
     # ---- files
     users_file: str               # USERS_FILE
     org_policy_path: str          # ORG_POLICY_PATH
@@ -148,6 +157,14 @@ class Settings:
             history_per_message_chars=_int(env, "HISTORY_PER_MESSAGE_CHARS", 600),
             max_upload_mb=_int(env, "MAX_UPLOAD_MB", 50),
             keep_uploads=env.get("KEEP_UPLOADS") == "1",
+            ocr_enabled=_str(env, "OCR_ENABLED", "1") == "1",
+            ocr_languages=_str(env, "OCR_LANGUAGES", "eng"),
+            ocr_min_chars=_int(env, "OCR_MIN_CHARS", 20),
+            ocr_min_confidence=_float(env, "OCR_MIN_CONFIDENCE", 50.0),
+            ocr_dpi=_int(env, "OCR_DPI", 200),
+            ocr_max_pages=_int(env, "OCR_MAX_PAGES", 200),
+            ocr_max_pixels=_int(env, "OCR_MAX_PIXELS", 25_000_000),
+            ocr_page_timeout_s=_float(env, "OCR_PAGE_TIMEOUT_S", 30.0),
             users_file=_str(env, "USERS_FILE", "users.yaml"),
             org_policy_path=_str(env, "ORG_POLICY_PATH", _DEFAULT_POLICY),
             audit_log_path=_str(env, "AUDIT_LOG_PATH", "./logs/audit.jsonl"),
@@ -158,7 +175,8 @@ class Settings:
     def validate(self):
         if self.kg_extractor not in ("ollama", "vllm"):
             raise ConfigError(f"KG_EXTRACTOR must be 'ollama' or 'vllm', got '{self.kg_extractor}'")
-        for name in ("retrieval_workers", "max_upload_mb", "kg_extract_num_ctx", "history_token_budget"):
+        for name in ("retrieval_workers", "max_upload_mb", "kg_extract_num_ctx", "history_token_budget", "ocr_dpi", "ocr_max_pixels",
+                     "ocr_page_timeout_s"):
             if getattr(self, name) < 1:
                 raise ConfigError(f"{name.upper()} must be at least 1")
         if self.prompt_profile not in ("enterprise", "enterprise_v3", "benchmark"):
@@ -166,7 +184,7 @@ class Settings:
         if self.model_max_len < self.answer_max_tokens + 1024:
             raise ConfigError("MODEL_MAX_LEN must leave at least 1024 tokens of room for the prompt beyond ANSWER_MAX_TOKENS")
         for name in ("history_max_messages", "history_generation_messages", "history_per_message_chars", "torch_threads",
-                     "kg_extract_workers"):
+                     "kg_extract_workers", "ocr_min_chars", "ocr_max_pages"):
             if getattr(self, name) < 0:
                 raise ConfigError(f"{name.upper()} cannot be negative")
 
