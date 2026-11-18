@@ -208,6 +208,19 @@ class RAGPipeline:
             result.graph_chunks_added = sum(1 for r in result.chunks if r.get("via_graph"))
         return keys
 
+    def merge_results(self, results, max_passages):
+        """Several searches of one question as a single result (see RetrievalResult.merge)."""
+        return RetrievalResult.merge(results, max_passages)
+
+    def read_passages(self, doc_id, user: User, start=0, limit=5):
+        """Passages `start` .. `start + limit - 1` of one document, in reading order, for the 'view source' panel:
+        [{"chunk_index", "text", "page"[, "scanned"]}]. The SAME access filter as a search is applied to every passage, so a
+        document the user may not read returns nothing. Only the stored passages exist (the uploaded file itself is deleted after
+        ingestion), so this is the document's text as it was indexed, not a picture of the original page."""
+        rows = self.store.fetch([(doc_id, i) for i in range(start, start + limit)], user)
+        return sorted(({"chunk_index": r["chunk_index"], "text": r["chunk"], "page": r.get("page"),
+                        **({"scanned": True} if r.get("ocr") else {})} for r in rows), key=lambda p: p["chunk_index"])
+
     def should_abstain(self, result: RetrievalResult) -> bool:
         """The refusal gate: True when the best passage is too weakly related to the question to answer from (cfg.abstain_below).
         Nothing retrieved is handled elsewhere; with no threshold configured the gate is off."""

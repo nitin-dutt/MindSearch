@@ -13,7 +13,7 @@ import os
 from typing import List, Optional
 
 import anyio
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Path, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Path, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -226,6 +226,20 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
         if entry is None:                          # missing and not-allowed look identical: existence is not leaked
             raise HTTPException(status_code=404, detail="Document not found")
         return public(entry, user)
+
+    @app.get("/v1/documents/{doc_id}/passages")
+    async def read_passages(doc_id: str = DOC_ID, start: int = Query(0, ge=0, le=1_000_000), limit: int = Query(5, ge=1, le=20),
+                            user: User = Depends(current_user)):
+        """The text of a document as it was indexed, a few passages at a time: what the 'view source' panel shows when a citation is
+        clicked (`start` = the cited passage's position, minus some context). Allowed for anyone who may read the document, and only
+        for them: an unknown document and a forbidden one both answer 404, and the passages go through the same access filter as a
+        search. Every view is audit-logged."""
+        entry = await anyio.to_thread.run_sync(rag.registry.get, doc_id, user)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        passages = await anyio.to_thread.run_sync(rag.read_passages, doc_id, user, start, limit)
+        audit.log("document_view", user=user.id, super_role=user.is_super, doc_id=doc_id, start=start, passages=len(passages))
+        return {"doc_id": doc_id, "filename": entry.filename, "total": entry.chunks, "start": start, "passages": passages}
 
     @app.delete("/v1/documents/{doc_id}")
     async def delete_document(doc_id: str = DOC_ID, user: User = Depends(current_user)):
