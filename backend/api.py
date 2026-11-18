@@ -27,8 +27,8 @@ import metrics
 from llm import LLMError
 from settings import get_settings
 from access_policy import PolicyError, User, can_access
-from audit import AuditLog, text_fingerprint
-from doc_identity import compute_doc_id
+from audit import AuditLog
+from ingestion import Ingestion, QueueUnavailable
 from ratelimit import RateLimiter
 from uploads import UploadError, safe_upload_path, validate_content
 
@@ -288,27 +288,15 @@ def create_app(rag, users: auth.UserStore, jwt_secret: str, upload_dir="uploads"
 
         queued = []
         for original_name, path, raw in prepared:
-            with open(path, "wb") as out:
-                out.write(raw)
-            doc_id = compute_doc_id(path, acl)
-            existing = await anyio.to_thread.run_sync(rag.registry.get, doc_id)
-            if existing and existing.status in ("queued", "processing", "done"):
-                os.remove(path)                    # same content + same access rule: nothing new to ingest
-                queued.append({"filename": original_name, "doc_id": doc_id, "status": existing.status,
-                               "duplicate": True, "task_id": None})
-                continue
-            await anyio.to_thread.run_sync(rag.registry.register, doc_id, acl, original_name, user.id, len(raw))
             try:
-                task_id = dispatch(path, acl.to_payload(), doc_id) if dispatch else None
-            except Exception as e:  # noqa: BLE001 - e.g. the job queue is down
-                await anyio.to_thread.run_sync(rag.registry.set_status, doc_id, "failed", None, "could not queue the job")
-                os.remove(path)
-                audit.log("ingest_dispatch_failed", user=user.id, doc_id=doc_id, error=type(e).__name__)
+                receipt = await anyio.to_thread.run_sync(ingest.submit, path, raw, acl, original_name, user.id)
+            except QueueUnavailable as e:
+                audit.log("ingest_dispatch_failed", user=user.id, doc_id=e.doc_id, error=e.cause)
                 raise HTTPException(status_code=503, detail="The ingestion queue is unavailable. Try again shortly.")
-            audit.log("ingest", user=user.id, super_role=user.is_super, doc_id=doc_id, filename=original_name,
-                      acl=acl.to_payload(), task_id=task_id)
-            queued.append({"filename": original_name, "doc_id": doc_id, "status": "queued",
-                           "duplicate": False, "task_id": task_id})
+            if not receipt["duplicate"]:
+                audit.log("ingest", user=user.id, super_role=user.is_super, doc_id=receipt["doc_id"], filename=original_name,
+                          acl=acl.to_payload(), task_id=receipt["task_id"])
+            queued.append(receipt)
 
         return {"status": "success", "processed": sum(1 for d in queued if not d["duplicate"]),
                 "message": "Documents queued for background processing", "documents": queued}
