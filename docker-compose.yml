@@ -3,7 +3,7 @@
 # really ready, and depends_on waits for it. Memory limits stop one service from starving the rest of the machine.
 services:
   redis:
-    image: redis:8.10.1-alpine
+    image: redis:8.10.3-alpine
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -16,7 +16,7 @@ services:
     mem_limit: 512m
 
   neo4j:
-    image: neo4j:2026.07.1
+    image: neo4j:2026.10.2
     ports:
       - "127.0.0.1:7474:7474"
       - "127.0.0.1:7687:7687"
@@ -33,7 +33,7 @@ services:
     mem_limit: 4g
 
   qdrant:
-    image: qdrant/qdrant:v1.19.1
+    image: qdrant/qdrant:v1.20.1
     ports:
       - "127.0.0.1:6333:6333"
     volumes:
@@ -48,7 +48,7 @@ services:
     mem_limit: 2g
 
   vllm_engine:
-    image: vllm/vllm-openai:v0.29.0
+    image: vllm/vllm-openai:v0.33.0
     ports:
       - "127.0.0.1:8001:8000"
     ipc: host
@@ -191,7 +191,7 @@ services:
         condition: service_healthy
 
   prometheus:
-    image: prom/prometheus:v3.14.0
+    image: prom/prometheus:v3.16.0
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
@@ -200,7 +200,7 @@ services:
     mem_limit: 1g
 
   grafana:
-    image: grafana/grafana:13.2.1
+    image: grafana/grafana:13.3.1
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
