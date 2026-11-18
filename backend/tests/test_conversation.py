@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import conversation as C
+from llm import LLMError
 
 
 def msg(role, content):
@@ -87,10 +88,10 @@ def test_the_answer_writer_sees_a_smaller_slice_than_the_rewriter(monkeypatch):
     ("What is the price of the Contoso deal?", "What is the price of the Contoso deal?"),
     ('Standalone question: "What is the price?"', "What is the price?"),
     ("Rewritten question: What is the price?\nThis is because...", "What is the price?"),
-    ("", "orig"), ("   \n  ", "orig"), ("x" * (C.MAX_REWRITE_CHARS + 1), "orig"),
+    ("", None), ("   \n  ", None), ("x" * (C.MAX_REWRITE_CHARS + 1), None),
 ])
-def test_clean_rewrite_keeps_one_sane_line_or_falls_back(raw, expected):
-    assert C.clean_rewrite(raw, "orig") == expected
+def test_clean_rewrite_keeps_one_sane_line_or_says_it_is_unusable(raw, expected):
+    assert C.clean_rewrite(raw) == expected
 
 
 def run(coro):
@@ -152,19 +153,29 @@ def test_an_unchanged_question_is_reported_as_not_rewritten():
     assert out == "When was it built?" and changed is False
 
 
-def test_a_failing_model_falls_back_to_the_original_question():
+def test_a_failing_model_is_an_error_not_a_quiet_search_with_the_raw_follow_up():
     async def boom(*a, **k):
         raise ConnectionError("vLLM down")
 
-    assert run(rewriter_with(boom).rewrite(turns(1), "what about its price?")) == ("what about its price?", False)
+    with pytest.raises(LLMError, match="ConnectionError"):
+        run(rewriter_with(boom).rewrite(turns(1), "what about its price?"))
 
 
-def test_a_slow_model_times_out_and_falls_back():
+def test_a_slow_model_times_out_with_an_error():
     async def slow(*a, **k):
         await asyncio.sleep(2)
         return "too late"
 
-    assert run(rewriter_with(slow, timeout=0.05).rewrite(turns(1), "and its price?")) == ("and its price?", False)
+    with pytest.raises(LLMError, match="longer than"):
+        run(rewriter_with(slow, timeout=0.05).rewrite(turns(1), "and its price?"))
+
+
+def test_an_unusable_rewrite_is_an_error():
+    async def empty(*a, **k):
+        return "   "
+
+    with pytest.raises(LLMError, match="usable"):
+        run(rewriter_with(empty).rewrite(turns(1), "and its price?"))
 
 
 def test_a_disabled_rewriter_never_calls_the_model():

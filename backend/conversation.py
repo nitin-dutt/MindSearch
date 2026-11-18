@@ -10,8 +10,10 @@ and it never influences access control (retrieval still runs with the caller's o
 """
 import asyncio
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
+import metrics
+from llm import LLMError
 from settings import get_settings
 
 _cfg = get_settings()
@@ -112,17 +114,19 @@ def _transcript(history: List[dict]) -> str:
     return "\n".join(f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}" for m in history)
 
 
-def clean_rewrite(text: str, original: str) -> str:
-    """Take the model's output, keep only a sane single-line question, or fall back to the original."""
+def clean_rewrite(text: str) -> Optional[str]:
+    """The model's output as one clean line ('Standalone question: "X"' -> 'X'), or None when it is not a usable question."""
     line = (text or "").strip().splitlines()[0].strip() if (text or "").strip() else ""
     line = re.sub(r"^(standalone question|rewritten question|question)\s*:\s*", "", line, flags=re.I).strip().strip('"').strip("'").strip()
     if not line or len(line) > MAX_REWRITE_CHARS:
-        return original
+        return None
     return line
 
 
 class QueryRewriter:
-    """Turns a follow-up into a standalone question. Never raises: on any problem the original question is used."""
+    """Turns a follow-up into a standalone question. When the model is needed and fails (down, too slow, unusable output) it raises
+    LLMError: the chat turn then fails visibly (HTTP 503) instead of quietly searching the raw follow-up, which finds the wrong
+    passages for 'and its price?' and would hide a broken model behind plausible-looking answers."""
 
     def __init__(self, model, complete, enabled=True, timeout=REWRITE_TIMEOUT_S):
         self.model, self.complete, self.enabled, self.timeout = model, complete, enabled, timeout
@@ -137,7 +141,14 @@ class QueryRewriter:
                                                 f"Follow-up question: {question}\n\nStandalone question:"}]
         try:
             raw = await asyncio.wait_for(self.complete(self.model, messages, max_tokens=100, temperature=0.0), self.timeout)
-        except Exception:  # noqa: BLE001 - timeouts, model errors, anything: fall back silently (the answer still works)
-            return question, False
-        standalone = clean_rewrite(raw, question)
+        except asyncio.TimeoutError as e:
+            metrics.REWRITE_FAILURES.labels("timeout").inc()
+            raise LLMError(f"rewriting the follow-up took longer than {self.timeout:.0f} s") from e
+        except Exception as e:  # noqa: BLE001 - model down or bad response: a real failure, reported as one
+            metrics.REWRITE_FAILURES.labels("model_error").inc()
+            raise LLMError(f"rewriting the follow-up failed ({type(e).__name__})") from e
+        standalone = clean_rewrite(raw)
+        if standalone is None:
+            metrics.REWRITE_FAILURES.labels("unusable_output").inc()
+            raise LLMError("the model did not return a usable standalone question")
         return standalone, standalone.strip().lower() != question.strip().lower()

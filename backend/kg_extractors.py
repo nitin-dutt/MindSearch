@@ -197,6 +197,7 @@ class ExtractionStats:
     triples_raw: int = 0
     triples_kept: int = 0
     seconds: float = 0.0
+    first_error: str = ""          # the first failure's exception type, e.g. 'ConnectError' (the worker log has the details)
 
     def to_dict(self):
         return asdict(self)
@@ -237,6 +238,9 @@ def extract_chunks(extractor, chunks, workers=1, min_words=5, attempts=2, progre
             except ExtractionError as e:
                 log.warning("Extraction failed for a chunk after %d attempts: %s", attempts, e)
                 result = ("failed", [])
+                with lock:
+                    if not stats.first_error:
+                        stats.first_error = type(e.__cause__ or e).__name__
         with lock:
             done += 1
             if done % progress_every == 0 or done == len(chunks):

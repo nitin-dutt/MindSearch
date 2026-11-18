@@ -74,6 +74,7 @@ class Settings:
     kg_extract_num_ctx: int       # KG_EXTRACT_NUM_CTX
     kg_extract_num_gpu: int       # KG_EXTRACT_NUM_GPU: 0 = CPU
     kg_extract_workers: int       # KG_EXTRACT_WORKERS: 0 = automatic (8 for vllm, 1 for ollama)
+    kg_max_failure_rate: float    # KG_MAX_FAILURE_RATE: a document whose graph extraction fails for more than this share of its passages is marked failed
     # ---- queue
     celery_broker_url: str        # CELERY_BROKER_URL
     celery_result_backend: str    # CELERY_RESULT_BACKEND
@@ -145,6 +146,7 @@ class Settings:
             kg_extract_num_ctx=_int(env, "KG_EXTRACT_NUM_CTX", 4096),
             kg_extract_num_gpu=_int(env, "KG_EXTRACT_NUM_GPU", 0),
             kg_extract_workers=_int(env, "KG_EXTRACT_WORKERS", 0),
+            kg_max_failure_rate=_float(env, "KG_MAX_FAILURE_RATE", 0.25),
             celery_broker_url=_str(env, "CELERY_BROKER_URL", "redis://localhost:6379/0"),
             celery_result_backend=_str(env, "CELERY_RESULT_BACKEND", "redis://localhost:6379/0"),
             pipeline_preset=_str(env, "PIPELINE_PRESET", "hybrid_graph_chunks"),

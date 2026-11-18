@@ -88,6 +88,10 @@ class RetrievalResult:
                 + [f"<kg_fact>{r['chunk']}</kg_fact>" for r in self.graph_facts])
 
 
+class GraphExtractionError(RuntimeError):
+    """Graph extraction failed for too many of a document's passages (KG_MAX_FAILURE_RATE). The message is safe to show the uploader."""
+
+
 class RAGPipeline:
     def __init__(self, config: PipelineConfig = None, encryptor: Encryptor = None, policy: AccessPolicy = None):
         self.config = config or PipelineConfig()
@@ -141,11 +145,31 @@ class RAGPipeline:
     def ingest_document(self, file_path, acl: DocACL, doc_id=None):
         """Idempotent: the same file with the same ACL always yields the same doc_id and point ids, so running
         this twice (or retrying after a partial failure) leaves exactly one copy.
-        Returns {"doc_id", "chunks"}."""
+        Returns {"doc_id", "chunks", "extraction"}; `extraction` is the OCR report (chunker.ExtractionReport as a dict)."""
         doc_id = doc_id or compute_doc_id(file_path, acl)
-        plaintext_chunks = self.ingest_vectors(file_path, acl, doc_id=doc_id)
-        self.ingest_graph(plaintext_chunks, acl, doc_id=doc_id)
-        return {"doc_id": doc_id, "chunks": len(plaintext_chunks)}
+        extraction = {}
+        plaintext_chunks = self.ingest_vectors(file_path, acl, doc_id=doc_id, report=extraction)
+        graph = None
+        if plaintext_chunks:
+            stats = self.ingest_graph(plaintext_chunks, acl, doc_id=doc_id)
+            if stats is not None:
+                graph = stats.to_dict()
+                limit = get_settings().kg_max_failure_rate
+                # Too many failed passages means the graph for this document is missing or badly incomplete (typically the extractor
+                # is not reachable). The document must not show 'done' as if multi-hop search worked for it: the caller fails it.
+                if stats.failure_rate > limit:
+                    raise GraphExtractionError(
+                        f"Knowledge-graph extraction failed for {stats.chunks_failed} of {stats.chunks_ok + stats.chunks_failed} passages "
+                        f"(more than {limit:.0%}; first error: {stats.first_error or 'unknown'}). Check that the extraction model "
+                        f"({stats.extractor}) is running, then upload the file again.")
+        return {"doc_id": doc_id, "chunks": len(plaintext_chunks), "extraction": extraction, "graph": graph}
+
+    def remove_partial(self, doc_id):
+        """Remove what a failed ingestion already wrote (passages and graph facts) but keep the registry entry, so the document stays
+        listed as failed with its reason and can never be searched half-built. Idempotent."""
+        self.store.delete(doc_id)
+        if self.kg_builder is not None:
+            self.kg_builder.delete_document(doc_id)
 
     def delete_document(self, doc_id) -> dict:
         """Remove a document everywhere: chunks, graph facts, then its registry entry (last, so a half-finished
