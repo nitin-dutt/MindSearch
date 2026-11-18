@@ -1,5 +1,5 @@
 import { parseSse } from "./sse";
-import type { ChatEvent, ChatTurn, DocumentEntry, Me, Policy, UploadResult } from "./types";
+import type { ChatEvent, ChatTurn, DocumentEntry, Me, PassagePage, Policy, UploadResult } from "./types";
 
 const BASE = "/api"; // nginx (production) and the Vite dev server both forward /api to the FastAPI service
 
@@ -81,9 +81,11 @@ export const getPolicy = () => request<Policy>("/v1/policy");
 export const listDocuments = async () => (await request<{ documents: DocumentEntry[] }>("/v1/documents")).documents;
 export const deleteDocument = (docId: string) => request<{ status: string }>(`/v1/documents/${docId}`, { method: "DELETE" });
 
+/** A few stored passages of a document, starting at `start` (the "view source" panel). 404 if the document is gone or not allowed. */
+export const getPassages = (docId: string, start: number, limit: number) => request<PassagePage>(`/v1/documents/${docId}/passages?start=${start}&limit=${limit}`);
+
 export async function uploadFiles(files: File[], level: string, groups: string[]): Promise<UploadResult[]> {
   const form = new FormData();
-  form.set("session_id", crypto.randomUUID());
   form.set("level", level);
   form.set("groups", groups.join(","));
   for (const f of files) form.append("files", f);
@@ -102,7 +104,7 @@ export async function streamChat(history: ChatTurn[], onEvent: (e: ChatEvent) =>
   const res = await fetch(`${BASE}/v1/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ model: "rag-model", stream: true, messages: history, ...(docIds && docIds.length > 0 ? { doc_ids: docIds } : {}) }),
+    body: JSON.stringify({ messages: history, ...(docIds && docIds.length > 0 ? { doc_ids: docIds } : {}) }),
     signal,
   });
   if (res.status === 401) {
