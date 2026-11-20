@@ -1,0 +1,82 @@
+{
+  "label": "gpurr-GR2-qwen35",
+  "created_utc": "20261119-072742",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "Qwen3.5-4B, CUDA graphs + cap 12, round 2, re-ranker on GPU",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 8.3,
+      "throughput_rps": 0.96,
+      "ttft_p50_ms": 599,
+      "ttft_p95_ms": 700,
+      "total_p50_ms": 872,
+      "total_p95_ms": 1997,
+      "retrieval_p50_ms": 335,
+      "health_p50_ms": 2,
+      "health_p95_ms": 2,
+      "health_max_ms": 4,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 10.3,
+      "throughput_rps": 1.94,
+      "ttft_p50_ms": 1447,
+      "ttft_p95_ms": 2125,
+      "total_p50_ms": 2387,
+      "total_p95_ms": 4100,
+      "retrieval_p50_ms": 820,
+      "health_p50_ms": 3,
+      "health_p95_ms": 6,
+      "health_max_ms": 10,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 17.5,
+      "throughput_rps": 2.28,
+      "ttft_p50_ms": 2280,
+      "ttft_p95_ms": 4138,
+      "total_p50_ms": 3687,
+      "total_p95_ms": 8250,
+      "retrieval_p50_ms": 1336,
+      "health_p50_ms": 3,
+      "health_p95_ms": 11,
+      "health_max_ms": 28,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 39.6,
+      "throughput_rps": 2.02,
+      "ttft_p50_ms": 6520,
+      "ttft_p95_ms": 9277,
+      "total_p50_ms": 9007,
+      "total_p95_ms": 13085,
+      "retrieval_p50_ms": 1770,
+      "health_p50_ms": 5,
+      "health_p95_ms": 22,
+      "health_max_ms": 65,
+      "health_timeouts": 0
+    }
+  ]
+}

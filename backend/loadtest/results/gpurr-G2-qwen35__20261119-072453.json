@@ -1,0 +1,82 @@
+{
+  "label": "gpurr-G2-qwen35",
+  "created_utc": "20261119-072453",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "Qwen3.5-4B, CUDA graphs + cap 12, round 2, re-ranker on CPU",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 10.5,
+      "throughput_rps": 0.76,
+      "ttft_p50_ms": 860,
+      "ttft_p95_ms": 1661,
+      "total_p50_ms": 1223,
+      "total_p95_ms": 1864,
+      "retrieval_p50_ms": 600,
+      "health_p50_ms": 2,
+      "health_p95_ms": 5,
+      "health_max_ms": 10,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 16.3,
+      "throughput_rps": 1.23,
+      "ttft_p50_ms": 2879,
+      "ttft_p95_ms": 3798,
+      "total_p50_ms": 3870,
+      "total_p95_ms": 5309,
+      "retrieval_p50_ms": 2284,
+      "health_p50_ms": 3,
+      "health_p95_ms": 37,
+      "health_max_ms": 94,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 33.7,
+      "throughput_rps": 1.19,
+      "ttft_p50_ms": 6174,
+      "ttft_p95_ms": 10060,
+      "total_p50_ms": 7575,
+      "total_p95_ms": 12761,
+      "retrieval_p50_ms": 4552,
+      "health_p50_ms": 14,
+      "health_p95_ms": 75,
+      "health_max_ms": 364,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 80.2,
+      "throughput_rps": 1.0,
+      "ttft_p50_ms": 16435,
+      "ttft_p95_ms": 22420,
+      "total_p50_ms": 19139,
+      "total_p95_ms": 25711,
+      "retrieval_p50_ms": 14907,
+      "health_p50_ms": 15,
+      "health_p95_ms": 38,
+      "health_max_ms": 188,
+      "health_timeouts": 0
+    }
+  ]
+}

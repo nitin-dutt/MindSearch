@@ -1,0 +1,82 @@
+{
+  "label": "speed-M2-qwen35",
+  "created_utc": "20261119-063331",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "MODEL-01 speed, mode M round 2 (E eager no cap / G CUDA graphs + cap 12 / M MTP 2 + cap 12)",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 13.1,
+      "throughput_rps": 0.61,
+      "ttft_p50_ms": 906,
+      "ttft_p95_ms": 1349,
+      "total_p50_ms": 1254,
+      "total_p95_ms": 4115,
+      "retrieval_p50_ms": 560,
+      "health_p50_ms": 2,
+      "health_p95_ms": 3,
+      "health_max_ms": 12,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 19.5,
+      "throughput_rps": 1.02,
+      "ttft_p50_ms": 2751,
+      "ttft_p95_ms": 4001,
+      "total_p50_ms": 4307,
+      "total_p95_ms": 8046,
+      "retrieval_p50_ms": 1152,
+      "health_p50_ms": 3,
+      "health_p95_ms": 14,
+      "health_max_ms": 39,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 40.0,
+      "throughput_rps": 1.0,
+      "ttft_p50_ms": 4843,
+      "ttft_p95_ms": 10536,
+      "total_p50_ms": 8574,
+      "total_p95_ms": 17667,
+      "retrieval_p50_ms": 2641,
+      "health_p50_ms": 12,
+      "health_p95_ms": 37,
+      "health_max_ms": 127,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 73.6,
+      "throughput_rps": 1.09,
+      "ttft_p50_ms": 14258,
+      "ttft_p95_ms": 18587,
+      "total_p50_ms": 17943,
+      "total_p95_ms": 25081,
+      "retrieval_p50_ms": 3939,
+      "health_p50_ms": 13,
+      "health_p95_ms": 34,
+      "health_max_ms": 186,
+      "health_timeouts": 0
+    }
+  ]
+}
