@@ -30,6 +30,8 @@ log = logging.getLogger("mindsearch.kg")
 
 PROMPT_VERSION = "v2"
 MAX_NAME_CHARS = 80
+# Qwen3.5 on 1,487 HotpotQA dev passages: p99 43 distinct facts, max 70; 60 stops repetition loops and cuts off almost nothing
+MAX_TRIPLES_PER_PASSAGE = 60
 
 SYSTEM_PROMPT = """You extract knowledge-graph facts from text.
 Return JSON: {"triples": [{"subject": "...", "relation": "...", "object": "..."}]}
@@ -112,6 +114,22 @@ class OllamaExtractor:
         return parse_extraction(resp.message.content)
 
 
+def _extraction_request() -> dict:
+    """Request fields that make the server return exactly the Extraction JSON.
+    response_format json_schema is enforced by vLLM. (The older `guided_json` field is silently ignored by vLLM 0.29: Qwen2.5 happened
+    to write bare JSON anyway, Qwen3.5 wrapped it in a ```json fence and every extraction failed; found 2026-11-19.)
+    A thinking model (Qwen3.5, the default generator) is told not to think, or it would spend the token budget before the JSON;
+    GENERATOR_THINKING=none sends no such field."""
+    schema = Extraction.model_json_schema()
+    # a cap the server enforces: a repetition loop (one passage repeated the same fact 63 times) ends at the cap instead of at the
+    # token limit, and duplicates are removed afterwards. Only in the request, so parse_extraction still accepts longer lists.
+    schema["properties"]["triples"]["maxItems"] = MAX_TRIPLES_PER_PASSAGE
+    req = {"response_format": {"type": "json_schema", "json_schema": {"name": "extraction", "schema": schema}}}
+    if get_settings().generator_thinking != "none":
+        req["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+    return req
+
+
 class VLLMExtractor:
     def __init__(self, model=None, base_url=None):
         from openai import OpenAI
@@ -126,10 +144,16 @@ class VLLMExtractor:
             model=self.model,
             messages=[{"role": "system", "content": SYSTEM_PROMPT},
                       {"role": "user", "content": f"Text:\n{chunk}"}],
-            temperature=0, max_tokens=800,
-            extra_body={"guided_json": Extraction.model_json_schema()},
+            temperature=0, max_tokens=get_settings().kg_extract_max_tokens,
+            **_extraction_request(),
         )
-        return parse_extraction(resp.choices[0].message.content)
+        choice = resp.choices[0]
+        if choice.finish_reason == "length":
+            # the JSON is cut off; say so instead of a generic 'not valid JSON' (the old 800-token budget cut off 119 of Qwen3.5's
+            # 133 failed passages on the HotpotQA dev set, 2026-11-19)
+            raise ExtractionError(f"the reply hit the token limit (KG_EXTRACT_MAX_TOKENS={get_settings().kg_extract_max_tokens}) "
+                                  "before the JSON was complete")
+        return parse_extraction(choice.message.content)
 
 
 def parse_extraction(content: str):
