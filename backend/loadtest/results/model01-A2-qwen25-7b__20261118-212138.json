@@ -1,0 +1,82 @@
+{
+  "label": "model01-A2-qwen25-7b",
+  "created_utc": "20261118-212138",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "MODEL-01 run A2: Qwen2.5-7B-AWQ (today)",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 12.0,
+      "throughput_rps": 0.66,
+      "ttft_p50_ms": 880,
+      "ttft_p95_ms": 1459,
+      "total_p50_ms": 1602,
+      "total_p95_ms": 1900,
+      "retrieval_p50_ms": 608,
+      "health_p50_ms": 2,
+      "health_p95_ms": 6,
+      "health_max_ms": 16,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 20.7,
+      "throughput_rps": 0.97,
+      "ttft_p50_ms": 2365,
+      "ttft_p95_ms": 3475,
+      "total_p50_ms": 5010,
+      "total_p95_ms": 7758,
+      "retrieval_p50_ms": 1386,
+      "health_p50_ms": 3,
+      "health_p95_ms": 24,
+      "health_max_ms": 90,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 35.3,
+      "throughput_rps": 1.13,
+      "ttft_p50_ms": 3484,
+      "ttft_p95_ms": 7737,
+      "total_p50_ms": 7832,
+      "total_p95_ms": 14963,
+      "retrieval_p50_ms": 2926,
+      "health_p50_ms": 13,
+      "health_p95_ms": 43,
+      "health_max_ms": 155,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 71.7,
+      "throughput_rps": 1.12,
+      "ttft_p50_ms": 11501,
+      "ttft_p95_ms": 15472,
+      "total_p50_ms": 17411,
+      "total_p95_ms": 26228,
+      "retrieval_p50_ms": 10610,
+      "health_p50_ms": 16,
+      "health_p95_ms": 61,
+      "health_max_ms": 175,
+      "health_timeouts": 0
+    }
+  ]
+}
