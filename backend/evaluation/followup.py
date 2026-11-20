@@ -57,7 +57,7 @@ async def make(args):
                     model=model, temperature=0.3, max_tokens=300,
                     messages=[{"role": "system", "content": SYSTEM},
                               {"role": "user", "content": f"Question: {item['question']}\nAnswer: {item['ground_truth']}"}],
-                    extra_body={"guided_json": SCHEMA})
+                    response_format={"type": "json_schema", "json_schema": {"name": "followup", "schema": SCHEMA}})   # enforced; guided_json is ignored by vLLM 0.29
                 data = json.loads(r.choices[0].message.content)
             except Exception as e:  # noqa: BLE001
                 print(f"  skipped {item['id']}: {type(e).__name__}")
