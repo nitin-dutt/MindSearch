@@ -57,7 +57,48 @@ ENTERPRISE_PROMPT_V3 = (
     f"5. Only if the documents, taken together, still do not contain what is needed, reply with exactly: {ABSTAIN_MESSAGE} Do not cite anything in that case."
 )
 
-PROMPTS = {"enterprise": ENTERPRISE_PROMPT, "enterprise_v3": ENTERPRISE_PROMPT_V3, "benchmark": BENCHMARK_PROMPT}
+# Version 4 (profile 'enterprise_v4', 2026-11-19, under measurement): the production rules, with rule 4 turned into a two-step procedure
+# for questions that go through a middle person or thing (on the HotpotQA dev set the model refused 9 such questions although both passages
+# were in the context), and names and terms written exactly as the documents write them (easier to check against the cited source).
+ENTERPRISE_PROMPT_V4 = (
+    "You are a precise, factual enterprise assistant. Answer the user's question using ONLY the numbered documents given as context. "
+    "Each document is wrapped in <doc id=\"N\"> tags; <kg_fact> tags, if present, hold supplementary facts.\n"
+    "Rules:\n"
+    "1. Use only information stated in the context. Never add outside knowledge or guess.\n"
+    "2. Cite the documents you used by their number in square brackets, like [1] or [2][3], right after the claim they support. "
+    "Cite only numbers that exist.\n"
+    "3. Be as brief as the question allows: a short factual question gets a short answer; a request for a summary, comparison or procedure "
+    "gets a clear, structured answer. Do not start with phrases like 'Based on the context'. Write names, titles and terms exactly as the "
+    "documents write them (the full name where a document gives one).\n"
+    "4. Many questions describe a person, place or work instead of naming it (for example 'the director of the 1940 film in which X "
+    "appeared'). For these, first find the document that identifies what is being described, then find the document with the fact asked "
+    "about that person, place or work, and combine them; cite both. Check that the fact belongs to the same one the question describes. "
+    "Do not refuse just because the answer is spread over more than one document.\n"
+    f"5. Only if the documents, taken together, still do not contain what is needed, reply with exactly: {ABSTAIN_MESSAGE} Do not cite anything in that case."
+)
+
+# Qwen3.5-4B profiles (MODEL-01 #3, 2026-11-19, tuned on the dev sets only). On squad_dev_unans Qwen3.5 with the production prompt
+# refused only ~75% of unanswerable questions: 15 of its 53 misses were refusals in its own words ("the documents do not contain ..."),
+# which the app cannot recognise, and 38 answered a question about something merely similar to what a document states.
+# q35a: the production prompt with a strict refusal format. q35b: q35a plus an "exactly the same thing" check in rule 1.
+# Rule 4 (combine documents for multi-hop questions) is unchanged in both, to keep the HotpotQA gain.
+_REFUSAL_STRICT = (f"5. Only if the documents, taken together, still do not contain what is needed, reply with exactly this sentence and nothing else: "
+                   f"{ABSTAIN_MESSAGE} Do not explain what the documents do or do not say, and do not cite anything in that case.")
+ENTERPRISE_PROMPT_Q35A = ENTERPRISE_PROMPT[:ENTERPRISE_PROMPT.index("5. Only if")] + _REFUSAL_STRICT
+ENTERPRISE_PROMPT_Q35B = ENTERPRISE_PROMPT_Q35A.replace(
+    "1. Use only information stated in the context. Never add outside knowledge or guess.\n",
+    "1. Use only information stated in the context. Never add outside knowledge or guess. Answer only if a document states the fact for "
+    "exactly the person, thing, place or time the question asks about; a fact about something similar (another name, an earlier or "
+    "later date, a broader or narrower claim) does not answer the question.\n")
+assert ENTERPRISE_PROMPT_Q35B != ENTERPRISE_PROMPT_Q35A
+# q35c: q35b plus one worked example (small models often follow an example better than a rule).
+ENTERPRISE_PROMPT_Q35C = ENTERPRISE_PROMPT_Q35B + (
+    "\nExample: the documents say a company was founded in 1990 and the question asks when it was sold. The founding date is about "
+    f"something else, so the whole reply is: {ABSTAIN_MESSAGE}")
+
+PROMPTS = {"enterprise": ENTERPRISE_PROMPT, "enterprise_v3": ENTERPRISE_PROMPT_V3, "enterprise_v4": ENTERPRISE_PROMPT_V4,
+           "enterprise_q35a": ENTERPRISE_PROMPT_Q35A, "enterprise_q35b": ENTERPRISE_PROMPT_Q35B,
+           "enterprise_q35c": ENTERPRISE_PROMPT_Q35C, "benchmark": BENCHMARK_PROMPT}
 
 
 def get_system_prompt() -> str:
@@ -79,6 +120,16 @@ def build_system_prompt(today=None) -> str:
     return prompt
 
 
+def _thinking(answer: bool) -> dict:
+    """Extra request fields for a model that can 'think' (reason step by step before answering; Qwen3.5 does by default).
+    GENERATOR_THINKING 'off' (default): no thinking on any call. 'on': the answer may think, the short helper calls may not (their token
+    budgets are small). 'none': nothing is sent, for a model without the option (Qwen2.5, the Llama judge)."""
+    mode = get_settings().generator_thinking
+    if mode == "none":
+        return {}
+    return {"extra_body": {"chat_template_kwargs": {"enable_thinking": mode == "on" and answer}}}
+
+
 async def stream_generate(model, query, context, history=None, today=None):
     prompt = f"Context:\n{context}\n\nQuestion:\n{query}\n\nAnswer:"
 
@@ -92,7 +143,8 @@ async def stream_generate(model, query, context, history=None, today=None):
             ],
             stream=True,
             temperature=0.1,
-            max_tokens=get_settings().answer_max_tokens
+            max_tokens=get_settings().answer_max_tokens,
+            **_thinking(answer=True),
         )
         
         async for chunk in response:
@@ -111,7 +163,7 @@ async def complete_tool_call(model, messages, tool, max_tokens=250):
     cannot wander off into prose. The arguments are still untrusted text; the caller validates them (agent.parse_plan)."""
     response = await client.chat.completions.create(
         model=model, messages=messages, tools=[tool], max_tokens=max_tokens, temperature=0.0,
-        tool_choice={"type": "function", "function": {"name": tool["function"]["name"]}})
+        tool_choice={"type": "function", "function": {"name": tool["function"]["name"]}}, **_thinking(answer=False))
     calls = response.choices[0].message.tool_calls or []
     return calls[0].function.arguments if calls else ""
 
@@ -119,5 +171,5 @@ async def complete_tool_call(model, messages, tool, max_tokens=250):
 async def complete_chat(model, messages, max_tokens=100, temperature=0.0):
     """One non-streaming completion (used for short helper tasks such as rewriting a follow-up question)."""
     response = await client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens,
-                                                    temperature=temperature)
+                                                    temperature=temperature, **_thinking(answer=False))
     return response.choices[0].message.content or ""
