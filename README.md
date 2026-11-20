@@ -29,6 +29,7 @@ By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, 
   - [4. Guardrailed Generation](#4-guardrailed-generation)
 - [Empirical Metrics & Evaluation](#empirical-metrics--evaluation)
   - [Re-run after the code restructure](#re-run-after-the-code-restructure-2026-11-17)
+  - [Generator upgrade: Qwen3.5-4B (2026-11-19)](#generator-upgrade-qwen35-4b-2026-11-19)
   - [SQuAD results (single-hop control)](#results-squad-v11-held-out-test-set-n100-generator-qwen25-7b-awq)
   - [Hybrid retrieval and the embedder choice](#hybrid-retrieval-and-the-embedder-choice)
   - [Multi-hop retrieval (the graph's job)](#multi-hop-retrieval-the-graphs-job)
@@ -52,7 +53,7 @@ By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, 
 2. **Document-Level Security (encryption at rest + policy-driven access control):** Unauthorized text never reaches the LLM prompt, because it is filtered out at the database query level before the prompt is built. Chunk text is AES-GCM-256 encrypted and each ciphertext is bound to its record and access rule; identity comes from signed login tokens.
 3. **High-Throughput Local Inference:** Maximize local GPU hardware utilization via **vLLM** (PagedAttention, Continuous Batching, and AWQ 4-bit quantization) Knowledge-graph extraction runs either on the same vLLM model (`KG_EXTRACTOR=vllm`, fast, GPU) or on a larger CPU model through Ollama (`KG_EXTRACTOR=ollama`, the default, slower).
 4. **Asynchronous Non-Blocking Scalability:** Decouple document parsing, embedding, and graph generation into background task queues using **Celery & Redis**.
-5. **Continuous Empirical Validation:** Rigorously validate context precision, recall, and faithfulness using an automated offline **RAGAS LLM-as-a-Judge** pipeline.
+5. **Continuous Empirical Validation:** Rigorously validate context precision, recall, and faithfulness using an automated, separate-pass **RAGAS LLM-as-a-Judge** pipeline, checked against human labels.
 
 ---
 
@@ -82,7 +83,7 @@ By fusing **Qdrant dense vector search**, **Neo4j multi-hop knowledge graphs**, 
                │  Storage Layer    │                                                 │
                ├───────────────────┤                                                 ▼
                │ Qdrant Vector DB  │ ◄──────────────────────────────────── Local vLLM Inference Engine
-               │ (Encrypted Docs)  │                                       (Qwen2.5-7B-Instruct-AWQ)
+               │ (Encrypted Docs)  │                                       (Qwen3.5-4B, 4-bit w4a16)
                ├───────────────────┤                                                 │
                │ Neo4j Graph DB    │ ◄──────────────────────────────────── Streaming Response (SSE)
                │ (Entities/Rel.)   │
@@ -130,7 +131,7 @@ MindSearch/
 │   ├── evaluation/                 # generate, judge, report, metrics, retrieval_bench, hop_tune, graph_diagnose, calibration,
 │   │                               #   ocr_eval (scanned pages), conversation_eval + prepare_conversations (multi-turn), results/
 │   ├── loadtest/                   # Concurrency load test and its results
-│   ├── tests/                      # 615 automated tests (access control, auth, API, encryption, graph, OCR, chat, failure paths)
+│   ├── tests/                      # 644 automated tests (access control, auth, API, encryption, graph, OCR, chat, failure paths, switches)
 │   ├── requirements*.txt, constraints.txt, .coveragerc, Dockerfile   # Pinned dependencies, full lock, coverage config
 │
 └── web/
@@ -175,8 +176,8 @@ Context:
 Question:
 What are the requirements for deployment?
 ```
-- **Inference Server:** Prompt is dispatched to **vLLM** serving `Qwen/Qwen2.5-7B-Instruct-AWQ` at `temperature=0.1`.
-- **System Instructions:** The production prompt confines the model to the numbered passages, asks it to cite them as `[1]`, `[2]`, to combine several documents when a question needs it, and to answer with one fixed "I don't know" sentence when the documents do not contain the answer (see Citations and "I don't know" below). The original 1-2 sentence prompt is kept as the `benchmark` profile so earlier results stay reproducible.
+- **Inference Server:** Prompt is dispatched to **vLLM** serving `RedHatAI/Qwen3.5-4B-quantized.w4a16` (Qwen3.5-4B, 4-bit; default since 2026-11-19, Qwen2.5-7B-Instruct-AWQ before) at `temperature=0.1`, with its step-by-step 'thinking' switched off, CUDA graphs and at most 12 answers in progress. See [Generator upgrade](#generator-upgrade-qwen35-4b-2026-11-19).
+- **System Instructions:** The production prompt confines the model to the numbered passages, asks it to cite them as `[1]`, `[2]`, to combine several documents when a question needs it, and to answer with one fixed "I don't know" sentence when the documents do not contain the answer (see Citations and "I don't know" below). The original 1-2 sentence prompt is kept as the `benchmark` profile so earlier results stay reproducible. With Qwen3.5 the default profile is `enterprise_q35c`: the same rules plus an 'exactly the same person, thing, place or time' check and one worked example of the refusal, tuned on dev sets only.
 - **Streaming:** Tokens stream back in real-time via Server-Sent Events (SSE).
 
 ---
@@ -229,6 +230,32 @@ Every published number below was re-run on the same frozen sets with the same se
 Answers moved by at most 2 points, within their confidence intervals. On HotpotQA the graph's answer gain is +0.04 (CI -0.01 to +0.10) with today's 'I don't know' prompt and gate, so it is reported as positive but not conclusive; the retrieval gain (+0.09, CI +0.04 to +0.15) is clear.
 
 **Why two datasets.** SQuAD is single-hop (the answer is in one passage), so it is the control: a graph cannot help there, and it shows the graph does no harm while measuring search, re-ranking and refusal. HotpotQA is multi-hop (two linked passages), where the graph should help, so it carries the headline result.
+
+### Generator upgrade: Qwen3.5-4B (2026-11-19)
+
+**Why a 4B model.** On the 8 GB GPU the limit is memory, not benchmark tables: vLLM gets 6.74 GiB and a model must fit its weights *plus* room for the KV cache (its notes on the text it is reading). Checked against the 2025-26 releases on Hugging Face (real 4-bit file sizes and architectures): Qwen3.5-9B and Gemma-4-12B need 7.6-10 GB as 4-bit files, Granite / Ministral / Olmo need 128-160 KB of KV per token (Qwen2.5-7B: 56 KB). Qwen3.5-4B is a *hybrid* model (24 of 32 layers keep a small fixed-size summary instead of notes on every word): 32 KB per token, KV cache 17,128 tokens with CUDA graphs (Qwen2.5-7B: 12,016). Everything below was measured on this machine, paired against the Qwen2.5-7B runs on the same questions; the prompt was tuned on dev sets only.
+
+| Benchmark | Qwen2.5-7B | **Qwen3.5-4B (default)** | Paired difference (95% CI) |
+| :--- | :---: | :---: | :---: |
+| HotpotQA `hotpot_b`, answer contains gold | 0.66 | **0.74** | **+0.080 (+0.020 to +0.150)** |
+| HotpotQA `hotpot_b`, cited passages that hold the answer | 0.77 | **0.92** | |
+| 'I don't know' on unanswerable questions (`squad_unans_b`) | 89.8% | 86.7% | -0.031 (-0.071 to 0.000), within noise |
+| Valid questions wrongly refused | 3.9% | **1.0%** | -0.029 |
+| SQuAD answers contain gold (answerable) | 0.804 | **0.922** | **+0.118 (+0.049 to +0.186)** |
+| Multi-turn chats (CONV-03), answer contains gold | 0.871 | 0.929 | +0.059 (-0.012 to +0.141) |
+
+Speed, load test with the re-ranker on the GPU (default) vs the previous stack (Qwen2.5-7B, re-ranker on the CPU); two runs each, seconds:
+
+| Simulated users | First word p50 | First word p95 | Full answer p95 | Requests/s |
+| :---: | :---: | :---: | :---: | :---: |
+| 1 | 0.87-0.88 -> **0.59-0.60** | 1.06-1.46 -> **0.70-0.72** | 1.82-1.90 -> 1.75-2.00 | 0.66-0.71 -> **0.96-0.98** |
+| 5 | 2.33-2.37 -> **1.45-1.65** | 3.48-4.21 -> **2.12-2.27** | 7.59-7.76 -> **3.58-4.10** | 0.97-1.00 -> **1.85-1.94** |
+| 10 | 3.48-3.73 -> **2.28-2.81** | 5.75-7.74 -> **4.14-4.70** | 14.20-14.96 -> **7.90-8.25** | 1.13-1.21 -> **2.05-2.28** |
+| 20 | 11.50-11.95 -> **6.52-7.20** | 15.47-16.07 -> **9.28-9.44** | 26.23-29.84 -> **13.09-13.80** | 1.12-1.14 -> **1.94-2.02** |
+
+What it took, each step measured and each failure loud at start-up: `--language-model-only` (Qwen3.5 can read images; without it vLLM reserved memory for a worst-case image and had no KV room); thinking off (`GENERATOR_THINKING`); CUDA graphs instead of eager mode (1-user full answer 1.76 -> 1.2 s), which on a hybrid model needs a cap on answers in progress (`VLLM_MAX_NUM_SEQS=12`); the re-ranker on the GPU, because faster answers moved the queue to the CPU search step; `HF_HUB_OFFLINE=1` (vLLM's first chat request looked up the model online and, with the connection failing, took 33 s) and a health check that generates one token. Rejected along the way: FP8 KV cache (garbled answers), ONNX int8 re-ranker (gain within noise), multi-token prediction together with CUDA graphs (does not fit in 8 GB), 8 passages instead of 4 for Qwen2.5 (no held-out gain, fewer refusals). The previous stack is one command away: `docker compose --env-file .env --env-file models/qwen25-7b.env ... up -d`.
+
+Honest limits: the 'I don't know' rate is 3 points lower than before (within the confidence interval, but the point estimate is lower); `hotpot_b` and `squad_unans_b` were used twice for Qwen3.5 (first with the production prompt, then with the dev-tuned one); load-test '20 users' are 20 requests in flight at once. The result tables below this section were measured with Qwen2.5-7B unless they say otherwise.
 
 ### Results: SQuAD v1.1 held-out test set (n=100, generator Qwen2.5-7B-AWQ)
 
@@ -306,7 +333,7 @@ A single-hop question (SQuAD) needs one passage, so a graph cannot help; a multi
 Against the fair baseline at the same four passages: both-passages-in-context **+0.080 (CI +0.030 to +0.140)**, answer contains-gold **+0.040 (CI +0.010 to +0.080)**. Against the previous pipeline: **+0.140 (CI +0.080 to +0.210)** on retrieval; the answer gain (+0.050, CI -0.010 to +0.120) is positive but not conclusive. Putting the graph's facts (triples) into the prompt as well adds nothing, so the default sends passages only.
 
 **Honest limits.**
-- With perfect retrieval this generator reaches 0.81 answer contains-gold on this benchmark (`evaluation/oracle_ceiling.py`), so answer scores are capped well below retrieval scores; the gap from 0.68 to 0.81 is partly the model, partly the remaining retrieval misses.
+- With perfect retrieval the previous generator (Qwen2.5-7B) reached 0.81 answer contains-gold on this benchmark (`evaluation/oracle_ceiling.py`), so answer scores were capped well below retrieval scores. The table above was measured with Qwen2.5-7B; with the current default (Qwen3.5-4B) the graph preset's answers on `hotpot_b` are 0.74 (see [Generator upgrade](#generator-upgrade-qwen35-4b-2026-11-19)); its ceiling has not been measured.
 - The ranker's weights were fitted on a separate 200-question HotpotQA sample (5-fold cross-validated there: 0.700 to 0.765 at three passages, 0.795 to 0.880 at four). The numbers above are on fresh questions and agree with those estimates.
 - The "page" signal uses a passage's leading title, as encyclopedia-style corpora have. For documents without titles or headings it contributes nothing and the rest of the ranker still applies; this is untested on such documents.
 - It was a negative result first: an earlier graph (facts only, matched by substring) gave no gain at all (answer contains-gold 0.655 to 0.625). The fix came from stage-by-stage diagnosis (`evaluation/graph_diagnose.py`): the missing passage was usually already a candidate, and the problem was ranking, not finding.
@@ -320,6 +347,8 @@ An answer you cannot check, or a confident answer to a question the documents ne
 **Citations.** Every passage in the prompt is numbered (`<doc id="2">`), the model is told to cite the passages it used as `[2]`, and the chat stream's final `sources` event lists them with their number, file name and PDF page; the `cited` flag marks the ones the answer actually used. The server reads the `[n]` markers back out of the answer and checks that each number exists (an invented `[9]` is logged and not trusted). An answer that says "I don't know" lists no sources.
 
 **"I don't know", in two layers.** (1) The prompt instructs the model to reply with one exact sentence when the combined documents do not contain what is needed. (2) A refusal *gate* runs before the model is called: if the best passage's cross-encoder score is below -9.0, the system answers "I don't know" itself (it was -6.0 until 2026-10-22; see the note under the table). The gate is on in the default preset (`hybrid_graph_chunks`) and off in the benchmark presets, so ablations stay comparable.
+
+**With the current default (Qwen3.5-4B, prompt `enterprise_q35c`, 2026-11-19)** on the same 200 frozen questions: says "I don't know" to **86.7%** of the unanswerable ones (paired vs the 89.8% below: -0.031, CI -0.071 to 0.000, within noise), wrongly refuses **1.0%** of valid ones, and 92% of cited passages hold the answer on `hotpot_b`. The table below was measured with Qwen2.5-7B.
 
 **How it was measured.** A benchmark of unanswerable questions was built from SQuAD (`prepare_unanswerable.py`): for about half of the answer passages, the passage is removed from the index while related passages (same article) stay, so a system that answers from loosely related text is caught. The gate's threshold was chosen on the dev version (`squad_dev_unans`; rule: refuse as many unanswerable questions as possible while wrongly refusing at most 5% of valid ones; the best passage's score separates the two groups with AUC 0.964), the prompt was revised once on dev and multi-hop tuning data, and the numbers below are from a **fresh set of 200 questions (98 unanswerable, 102 answerable) that played no part in any decision** (`squad_unans_b`). Judge-free, 95% bootstrap CIs.
 
@@ -393,6 +422,8 @@ Rewriting raises recall@3 by +0.175 (95% CI +0.136 to +0.217) and is statistical
 
 ### Concurrency and load
 
+**Current default** (Qwen3.5-4B, CUDA graphs, re-ranker on the GPU): see the speed table in [Generator upgrade](#generator-upgrade-qwen35-4b-2026-11-19); at 20 users the first word now arrives in 6.5-7.2 s (p50) and throughput is about 2 requests/s. The measurements below were taken with Qwen2.5-7B and the CPU re-ranker.
+
 **The default (graph) preset, before and after scoring the pool once (PERF-01, 2026-11-17).** With graph hops on, the search pool used to be scored by the cross-encoder twice per question; it is now scored once and the scores are reused. Same machine, same 107-passage corpus, runs in the order before, after, before, after (`RERANK_ONCE=0` switches the old behaviour back on for the test):
 
 | Simulated users | Time to first token p50 | p95 | Requests/s |
@@ -401,7 +432,7 @@ Rewriting raises recall@3 by +0.175 (95% CI +0.136 to +0.217) and is statistical
 | 10 | 6.9 s -> **3.6-3.9 s** | 10.8 -> 5.6-7.8 s | 0.87 -> 1.22-1.37 |
 | 20 | 20.1 s -> **12.2-12.4 s** | 24.9 -> **17.2 s** | 0.79 -> 1.10-1.12 |
 
-Retrieval quality is unchanged (HotpotQA both passages in context 0.88). This is the setting users get by default, so these, not the dense-preset numbers below, describe today's latency. The bottleneck at 20 users is still CPU work in retrieval (11.5 s server-side p50); the next candidates are running the re-ranker on the GPU and scoring a smaller pool. Note that '20 users' here means 20 requests in flight at once, each user asking again as soon as an answer ends; real users who stop to read put far less load on the server.
+Retrieval quality is unchanged (HotpotQA both passages in context 0.88). This is the setting users get by default, so these, not the dense-preset numbers below, describe today's latency. The bottleneck at 20 users was CPU work in retrieval (11.5 s server-side p50); running the re-ranker on the GPU (now the default) removed it, see [Generator upgrade](#generator-upgrade-qwen35-4b-2026-11-19). Note that '20 users' here means 20 requests in flight at once, each user asking again as soon as an answer ends; real users who stop to read put far less load on the server.
 
 Measured with `python -m loadtest.chat_load` (closed-loop simulated users, each sending 4 chat requests; SQuAD questions over an 87-chunk index; Qwen2.5-7B-AWQ on vLLM; RTX 5070 Laptop 8 GB, Ryzen 9 8940HX). Raw results are in `backend/loadtest/results/`. Each cell is **p95 time-to-first-token / throughput**.
 
@@ -440,7 +471,9 @@ Hardware: AMD Ryzen 9 8940HX, Python 3.11.7, Windows 11. Encryption cost is negl
 
 - 🛡️ **Policy-driven access control, verified:** one access rule (clearance levels + departments + super roles, defined per organization in `org_policy.yaml`) is compiled into both the Qdrant filter and the Neo4j filter. An exhaustive test checks every user against every document ACL for five organization structures and confirms both databases return exactly what the rule allows. Chunk text is AES-GCM-256 encrypted with a key kept outside the data, and ciphertext is bound to its record and ACL so database tampering cannot widen access. Limits (for example plaintext graph entity names, no built-in TLS) are listed under [Security Model and Limits](#security-model-and-limits).
 - ⚡ **No Per-Token Fees & Data Stays On-Prem:** a self-hosted pipeline running on a local NVIDIA GPU. Documents and questions are processed on your own machines and never sent to a cloud AI service.
-- 🧠 **Multi-hop retrieval via a knowledge graph:** both supporting passages reach the model for 88% of 100 held-out HotpotQA questions (re-run 2026-11-17; 87% when first measured) versus 79% for a hybrid baseline with the same four passages (+9 points, 95% CI +4 to +15) and 73% for the original dense pipeline. Answer accuracy rises less (0.63 to 0.68 when first measured; the model's ceiling with perfect passages is 0.81).
+- 🧠 **Multi-hop retrieval via a knowledge graph:** both supporting passages reach the model for 88% of 100 held-out HotpotQA questions (re-run 2026-11-17; 87% when first measured) versus 79% for a hybrid baseline with the same four passages (+9 points, 95% CI +4 to +15) and 73% for the original dense pipeline. Answer accuracy rose less with the previous generator (0.63 to 0.68 when first measured; its ceiling with perfect passages was 0.81); with the current Qwen3.5-4B it is 0.74 on the same questions.
+- 🔁 **A newer, smaller model that answers better:** chosen by what fits an 8 GB GPU (real 4-bit file sizes and KV memory per token), Qwen3.5-4B replaced Qwen2.5-7B: held-out multi-hop answers 0.66 to 0.74 (+8 points, 95% CI +2 to +15), single-hop 0.80 to 0.92, cited passages that hold the answer 77% to 92%, valid questions wrongly refused 3.9% to 1.0%; it says "I don't know" to 86.7% of unanswerable questions (89.8% before, within the confidence interval). See [Generator upgrade](#generator-upgrade-qwen35-4b-2026-11-19).
+- 🚀 **Faster under load on one 8 GB GPU:** with the re-ranker on the GPU, CUDA graphs and a cap on answers in progress, at 20 concurrent requests the first word arrives in 6.5-7.2 s instead of 11.5-12.0 s (p50), the slowest full answers (p95) in about 13.5 s instead of 26-30 s, and throughput doubles (1.1 to 2.0 requests/s); one user gets a full answer in about 0.9 s.
 - 📄 **Scanned documents:** pages that are only pictures of text are read with local OCR; on 20 real scanned pages the answer appears in the indexed text for 79.6% of 54 questions (0% without OCR), at about 1 second per page, and answers cite them as 'page N (scanned)'.
 - 💬 **Follow-up questions:** on 100 hand-written multi-turn chats, rewriting follow-ups gets the right fact into 87% of answers, the same as typing the full question, against 68% without rewriting.
 - 📈 **Observability:** per-stage timings of every chat request (question embedding, vector search, decryption, re-ranking, graph hop, model), how each request ended (answered, refused, failed ...), ingestion counters, and an auto-provisioned Grafana dashboard; see [Observability](#observability).
@@ -505,7 +538,7 @@ Planned next steps (items marked *done in v2* have already shipped):
 
 ### Prerequisites
 - Docker & Docker Compose
-- NVIDIA GPU with CUDA drivers installed. Developed and measured on an 8 GB RTX 5070 Laptop GPU (one quantized 7B model at a time)
+- NVIDIA GPU with CUDA drivers installed. Developed and measured on an 8 GB RTX 5070 Laptop GPU (one quantized model at a time: Qwen3.5-4B by default; the cross-encoder re-ranker shares the GPU)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) configured
 
 ### 1. Clone the Repository
@@ -527,9 +560,10 @@ Levels, departments and super roles come from `backend/org_policy.yaml`. Ready-m
 ```bash
 docker compose up --build
 ```
+**First start on a new machine:** vLLM does not contact the internet by default (`HF_HUB_OFFLINE=1`: it uses only the model already downloaded). For the very first start, which downloads the model (about 5.5 GB), run `HF_HUB_OFFLINE=0 docker compose up --build` once. The API image carries a CUDA PyTorch for the GPU re-ranker (about 12 GB); `TORCH_CUDA=0` with `RERANKER_DEVICE=cpu` builds the 3 GB CPU-only image instead. To run the previous stack (Qwen2.5-7B, CPU re-ranker): `docker compose --env-file .env --env-file models/qwen25-7b.env up -d`.
 Every image and Python package version is pinned (`docker-compose.yml`, `backend/requirements*.txt`, `backend/constraints.txt`), so a build today matches the one that was measured. Each service has a health check and `depends_on` waits for it, so the API only starts once Redis, Neo4j, Qdrant and the model server are really ready (the first start downloads the model and takes several minutes). Memory limits are set per service. On Windows, Docker Desktop gets only half of the machine's RAM by default; the full stack (about 11 GB in use with the model loaded) is more comfortable with an explicit limit in `%UserProfile%\.wslconfig`, e.g. `[wsl2]` / `memory=24GB`, followed by `wsl --shutdown`.
 
-**Graph extraction model.** Building the knowledge graph needs a language model. With the default `KG_EXTRACTOR=ollama` it uses `qwen2.5:14b-instruct` through an Ollama server on the host (`ollama pull qwen2.5:14b-instruct`; runs on the CPU, slow, about 11 GB of RAM). Set `KG_EXTRACTOR=vllm` in `.env` to use the vLLM model that is already running instead (GPU, fast). If the chosen extractor cannot be reached, uploads are marked failed with that reason rather than stored without a graph.
+**Graph extraction model.** Building the knowledge graph needs a language model. With the default `KG_EXTRACTOR=ollama` it uses `qwen2.5:14b-instruct` through an Ollama server on the host (`ollama pull qwen2.5:14b-instruct`; runs on the CPU, slow, about 11 GB of RAM). Set `KG_EXTRACTOR=vllm` in `.env` to use the vLLM model that is already running instead (GPU, fast). With the default generator that is Qwen3.5-4B (no thinking; the JSON format is enforced by the server). Measured on the HotpotQA dev set against the graph built by Qwen2.5-7B: both passages in context 0.765 = 0.765, answers 0.765 vs 0.775, 24,850 facts vs 14,060, and 0.3% of passages failed to extract (Qwen2.5: 1.2%). Getting there took a 2,048-token reply budget (`KG_EXTRACT_MAX_TOKENS`; at 800, 119 of 133 failures were cut-off replies) and a cap of 60 facts per passage in the server-enforced schema (the rest were repetition loops, one fact written 63 times). If the chosen extractor cannot be reached, uploads are marked failed with that reason rather than stored without a graph.
 
 Sign in at the UI with the user you created. This starts (infrastructure ports listen on localhost only):
 - **FastAPI Gateway:** `http://localhost:8000`
@@ -540,7 +574,7 @@ Sign in at the UI with the user you created. This starts (infrastructure ports l
 - **Grafana:** `http://localhost:3000`
 
 ### Tests and CI
-Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, npm packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. Minor and patch updates are grouped into one pull request per ecosystem; major updates each get their own. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. The suite has 615 tests (all passing inside the worker container on 2026-11-17), and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
+Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, npm packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. Minor and patch updates are grouped into one pull request per ecosystem; major updates each get their own. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. The suite has 644 tests (all passing inside the worker container on 2026-11-19; 12 skipped there because they need the compose files or a GPU), and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
 ```bash
 ruff check .
 cd backend && python -m pytest tests -q --cov=. --cov-config=.coveragerc --cov-report=term
