@@ -1,0 +1,123 @@
+{
+  "n_chats": 100,
+  "config": "hybrid_rerank",
+  "retrieval_only": false,
+  "strategies": {
+    "needed": {
+      "all": {
+        "gold@1": {
+          "mean": 0.9529411764705882,
+          "ci_low": 0.9058823529411765,
+          "ci_high": 0.9882352941176471,
+          "n": 85
+        },
+        "gold@3": {
+          "mean": 0.9764705882352941,
+          "ci_low": 0.9411764705882353,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "gold@5": {
+          "mean": 0.9764705882352941,
+          "ci_low": 0.9411764705882353,
+          "ci_high": 1.0,
+          "n": 85
+        },
+        "right_outcome": {
+          "mean": 0.94,
+          "ci_low": 0.89,
+          "ci_high": 0.98,
+          "n": 100
+        },
+        "seconds_decided": {
+          "mean": 1.9628835319799327,
+          "ci_low": 1.8201448470598551,
+          "ci_high": 2.113597751679845,
+          "n": 100
+        },
+        "seconds_total": {
+          "mean": 3.5879331167900816,
+          "ci_low": 3.2316879982501634,
+          "ci_high": 3.9814334855102786,
+          "n": 100
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.71,
+      "p95_seconds_decided": 3.1259871020010905,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 0.9714285714285714,
+            "ci_low": 0.9142857142857143,
+            "ci_high": 1.0,
+            "n": 35
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 35
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 20
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": 0.9333333333333333,
+            "ci_low": 0.8,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 0.9333333333333333,
+            "ci_low": 0.8,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 15
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": 0.6666666666666666,
+            "ci_low": 0.4666666666666667,
+            "ci_high": 0.8666666666666667,
+            "n": 15
+          }
+        }
+      }
+    }
+  },
+  "paired": {}
+}

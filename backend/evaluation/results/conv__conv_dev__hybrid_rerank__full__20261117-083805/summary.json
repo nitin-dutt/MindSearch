@@ -1,0 +1,764 @@
+{
+  "n_chats": 3,
+  "config": "hybrid_rerank",
+  "retrieval_only": false,
+  "strategies": {
+    "standalone": {
+      "all": {
+        "gold@1": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@3": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@5": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "right_outcome": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "seconds_decided": {
+          "mean": 0.6662419123331347,
+          "ci_low": 0.3846683989995654,
+          "ci_high": 1.2205120700000407,
+          "n": 3
+        },
+        "seconds_total": {
+          "mean": 0.9535207353328587,
+          "ci_low": 0.47244865899847355,
+          "ci_high": 1.8901735250001366,
+          "n": 3
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.0,
+      "p95_seconds_decided": 1.2205120700000407,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        }
+      }
+    },
+    "raw": {
+      "all": {
+        "gold@1": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@3": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@5": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "right_outcome": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "seconds_decided": {
+          "mean": 0.659086429999661,
+          "ci_low": 0.42902437100019597,
+          "ci_high": 1.0083397409998724,
+          "n": 3
+        },
+        "seconds_total": {
+          "mean": 1.8697475076666403,
+          "ci_low": 0.9824481939995167,
+          "ci_high": 3.1379069310005434,
+          "n": 3
+        }
+      },
+      "errors": 0,
+      "rewritten": 0.0,
+      "p95_seconds_decided": 1.0083397409998724,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        }
+      }
+    },
+    "always": {
+      "all": {
+        "gold@1": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@3": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@5": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "right_outcome": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "seconds_decided": {
+          "mean": 0.6778899973329923,
+          "ci_low": 0.6326186829992366,
+          "ci_high": 0.7368912160000036,
+          "n": 3
+        },
+        "seconds_total": {
+          "mean": 1.088501650332546,
+          "ci_low": 0.7327603859994269,
+          "ci_high": 1.3880968849989586,
+          "n": 3
+        }
+      },
+      "errors": 0,
+      "rewritten": 1.0,
+      "p95_seconds_decided": 0.7368912160000036,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        }
+      }
+    },
+    "needed_noretry": {
+      "all": {
+        "gold@1": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@3": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@5": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "right_outcome": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "seconds_decided": {
+          "mean": 0.8715761996663787,
+          "ci_low": 0.5327219629998581,
+          "ci_high": 1.479028780999215,
+          "n": 3
+        },
+        "seconds_total": {
+          "mean": 1.2310746346659773,
+          "ci_low": 0.6333756549993268,
+          "ci_high": 1.8348669319984765,
+          "n": 3
+        }
+      },
+      "errors": 0,
+      "rewritten": 1.0,
+      "p95_seconds_decided": 1.479028780999215,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        }
+      }
+    },
+    "needed": {
+      "all": {
+        "gold@1": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@3": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@5": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "right_outcome": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "seconds_decided": {
+          "mean": 1.0961834193331015,
+          "ci_low": 0.5298837789996469,
+          "ci_high": 2.2216541090001556,
+          "n": 3
+        },
+        "seconds_total": {
+          "mean": 1.5201182673329943,
+          "ci_low": 0.7294362880002154,
+          "ci_high": 2.59341910799958,
+          "n": 3
+        }
+      },
+      "errors": 0,
+      "rewritten": 1.0,
+      "p95_seconds_decided": 2.2216541090001556,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        }
+      }
+    },
+    "agent": {
+      "all": {
+        "gold@1": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@3": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "gold@5": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "right_outcome": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 3
+        },
+        "seconds_decided": {
+          "mean": 0.8716040189998845,
+          "ci_low": 0.5367896280004061,
+          "ci_high": 1.4919710100002703,
+          "n": 3
+        },
+        "seconds_total": {
+          "mean": 1.2430297806664992,
+          "ci_low": 0.6373972809997213,
+          "ci_high": 1.8727034809999168,
+          "n": 3
+        }
+      },
+      "errors": 0,
+      "rewritten": 1.0,
+      "p95_seconds_decided": 1.4919710100002703,
+      "by_category": {
+        "pronoun": {
+          "gold@3": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          },
+          "right_outcome": {
+            "mean": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0,
+            "n": 3
+          }
+        },
+        "topic_switch": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "vague": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "refusal_mid": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        },
+        "unanswerable": {
+          "gold@3": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          },
+          "right_outcome": {
+            "mean": null,
+            "ci_low": null,
+            "ci_high": null,
+            "n": 0
+          }
+        }
+      },
+      "plans": {
+        "used": 0,
+        "failed": 3,
+        "off": 0
+      }
+    }
+  },
+  "paired": {
+    "standalone minus needed: gold@3": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "standalone minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "raw minus needed: gold@3": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "raw minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "always minus needed: gold@3": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "always minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "needed_noretry minus needed: gold@3": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "needed_noretry minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "agent minus needed: gold@3": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    },
+    "agent minus needed: right_outcome": {
+      "diff": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 3
+    }
+  }
+}
