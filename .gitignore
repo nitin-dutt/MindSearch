@@ -114,3 +114,6 @@ backups/
 
 # Demo video renders and recordings (large; the published demo is linked in the README)
 demo_video/
+
+# Local model presets (rollback and evaluation-judge switches): machine-specific, not committed
+models/*.env
