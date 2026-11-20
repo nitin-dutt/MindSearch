@@ -96,7 +96,8 @@ def test_context_numbers_match_the_sources_list():
 def test_only_the_production_presets_have_the_refusal_gate_on():
     from pipeline_config import PRESETS
     on = {name for name, cfg in PRESETS.items() if cfg.abstain_below is not None}
-    assert on == {"hybrid_graph_chunks", "full_hybrid"} and PRESETS["hybrid_graph_chunks"].abstain_below == -9.0
+    # hybrid_graph_chunks_k8 is the production preset with 8 passages (GEN-72, measured and rejected), so it keeps the production gate
+    assert on == {"hybrid_graph_chunks", "full_hybrid", "hybrid_graph_chunks_k8"} and PRESETS["hybrid_graph_chunks"].abstain_below == -9.0
     assert PRESETS["dense_only"].abstain_below is None and PRESETS["hybrid_rerank"].abstain_below is None   # ablations stay comparable
 
 

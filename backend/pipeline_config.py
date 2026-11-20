@@ -80,6 +80,12 @@ PRESETS = {
     # No dynamic cutoff here: it was tuned on single-hop SQuAD and cuts the second hop (both passages in the top 3: 0.700 -> 0.505).
     "full_hybrid": PipelineConfig(name="full_hybrid", use_reranker=True, use_graph=True, hybrid=True, graph_expand=True, final_k=4,
                                 abstain_below=-9.0),
+    # GEN-72 (2026-11-19, under measurement): the same presets with 8 passages for the model. The search pool already holds both
+    # supporting passages for 99% of HotpotQA questions; the cut to 4 is where one gets lost. HotpotQA dev: answers containing the gold
+    # answer 0.685 (4 passages) -> 0.710 (6) -> 0.730 (8), context about 460 -> 970 words. Select with PIPELINE_PRESET.
+    "hybrid_graph_chunks_k8": PipelineConfig(name="hybrid_graph_chunks_k8", use_reranker=True, use_graph=True, hybrid=True,
+                                             graph_expand=True, graph_k=0, final_k=8, abstain_below=-9.0),
+    "hybrid_rerank_k8": PipelineConfig(name="hybrid_rerank_k8", use_reranker=True, use_graph=False, hybrid=True, final_k=8),
     "hybrid_graph_facts": PipelineConfig(name="hybrid_graph_facts", use_reranker=True, use_graph=True, hybrid=True),
     "dense_rerank_fast": PipelineConfig(name="dense_rerank_fast", use_reranker=True, use_graph=False,
                                         candidate_k=10, rerank_margin=4.0),
