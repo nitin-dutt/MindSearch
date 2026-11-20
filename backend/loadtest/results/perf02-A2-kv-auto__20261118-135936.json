@@ -1,0 +1,82 @@
+{
+  "label": "perf02-A2-kv-auto",
+  "created_utc": "20261118-135936",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "PERF-02 A-B-A-B, run A2: VLLM_KV_CACHE_DTYPE=auto (16-bit), after fp8 rejected",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 11.0,
+      "throughput_rps": 0.73,
+      "ttft_p50_ms": 890,
+      "ttft_p95_ms": 1076,
+      "total_p50_ms": 1283,
+      "total_p95_ms": 2034,
+      "retrieval_p50_ms": 616,
+      "health_p50_ms": 2,
+      "health_p95_ms": 3,
+      "health_max_ms": 5,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 16.8,
+      "throughput_rps": 1.19,
+      "ttft_p50_ms": 2222,
+      "ttft_p95_ms": 3379,
+      "total_p50_ms": 3682,
+      "total_p95_ms": 6555,
+      "retrieval_p50_ms": 1164,
+      "health_p50_ms": 3,
+      "health_p95_ms": 20,
+      "health_max_ms": 27,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 37.3,
+      "throughput_rps": 1.07,
+      "ttft_p50_ms": 4038,
+      "ttft_p95_ms": 7598,
+      "total_p50_ms": 8138,
+      "total_p95_ms": 15182,
+      "retrieval_p50_ms": 3603,
+      "health_p50_ms": 14,
+      "health_p95_ms": 37,
+      "health_max_ms": 118,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 70.7,
+      "throughput_rps": 1.13,
+      "ttft_p50_ms": 12554,
+      "ttft_p95_ms": 15785,
+      "total_p50_ms": 16646,
+      "total_p95_ms": 23566,
+      "retrieval_p50_ms": 11781,
+      "health_p50_ms": 15,
+      "health_p95_ms": 43,
+      "health_max_ms": 144,
+      "health_timeouts": 0
+    }
+  ]
+}

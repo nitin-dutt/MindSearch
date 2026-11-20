@@ -1,0 +1,82 @@
+{
+  "label": "perf03-C2-torch-cuda",
+  "created_utc": "20261118-153956",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "PERF-03 run C2: RERANKER_DEVICE=cuda (GPU overlay), warm-up question first",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 8.2,
+      "throughput_rps": 0.98,
+      "ttft_p50_ms": 466,
+      "ttft_p95_ms": 678,
+      "total_p50_ms": 880,
+      "total_p95_ms": 1486,
+      "retrieval_p50_ms": 398,
+      "health_p50_ms": 2,
+      "health_p95_ms": 3,
+      "health_max_ms": 5,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 12.7,
+      "throughput_rps": 1.57,
+      "ttft_p50_ms": 1196,
+      "ttft_p95_ms": 1998,
+      "total_p50_ms": 2735,
+      "total_p95_ms": 5068,
+      "retrieval_p50_ms": 729,
+      "health_p50_ms": 2,
+      "health_p95_ms": 9,
+      "health_max_ms": 21,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 28.3,
+      "throughput_rps": 1.41,
+      "ttft_p50_ms": 3215,
+      "ttft_p95_ms": 4563,
+      "total_p50_ms": 6044,
+      "total_p95_ms": 12735,
+      "retrieval_p50_ms": 1494,
+      "health_p50_ms": 3,
+      "health_p95_ms": 8,
+      "health_max_ms": 25,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 54.8,
+      "throughput_rps": 1.46,
+      "ttft_p50_ms": 4143,
+      "ttft_p95_ms": 11302,
+      "total_p50_ms": 11671,
+      "total_p95_ms": 27251,
+      "retrieval_p50_ms": 1509,
+      "health_p50_ms": 3,
+      "health_p95_ms": 16,
+      "health_max_ms": 91,
+      "health_timeouts": 0
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "label": "perf03-cap12-A2",
+  "created_utc": "20261118-165703",
+  "base_url": "http://api:8000",
+  "levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "machine": {
+    "python": "3.12.16",
+    "cpu_count": 32
+  },
+  "note": "PERF-03 today's setup (CPU reranker, no cap) on the GPU-torch image, run A2",
+  "rows": [
+    {
+      "users": 1,
+      "requests": 8,
+      "errors": 0,
+      "wall_s": 11.5,
+      "throughput_rps": 0.7,
+      "ttft_p50_ms": 871,
+      "ttft_p95_ms": 1021,
+      "total_p50_ms": 1403,
+      "total_p95_ms": 1907,
+      "retrieval_p50_ms": 577,
+      "health_p50_ms": 2,
+      "health_p95_ms": 5,
+      "health_max_ms": 9,
+      "health_timeouts": 0
+    },
+    {
+      "users": 5,
+      "requests": 20,
+      "errors": 0,
+      "wall_s": 19.4,
+      "throughput_rps": 1.03,
+      "ttft_p50_ms": 2309,
+      "ttft_p95_ms": 2949,
+      "total_p50_ms": 4078,
+      "total_p95_ms": 7778,
+      "retrieval_p50_ms": 1226,
+      "health_p50_ms": 3,
+      "health_p95_ms": 21,
+      "health_max_ms": 57,
+      "health_timeouts": 0
+    },
+    {
+      "users": 10,
+      "requests": 40,
+      "errors": 0,
+      "wall_s": 35.6,
+      "throughput_rps": 1.12,
+      "ttft_p50_ms": 4074,
+      "ttft_p95_ms": 6783,
+      "total_p50_ms": 8700,
+      "total_p95_ms": 14815,
+      "retrieval_p50_ms": 3220,
+      "health_p50_ms": 12,
+      "health_p95_ms": 33,
+      "health_max_ms": 100,
+      "health_timeouts": 0
+    },
+    {
+      "users": 20,
+      "requests": 80,
+      "errors": 0,
+      "wall_s": 70.0,
+      "throughput_rps": 1.14,
+      "ttft_p50_ms": 10978,
+      "ttft_p95_ms": 15086,
+      "total_p50_ms": 15695,
+      "total_p95_ms": 27774,
+      "retrieval_p50_ms": 10289,
+      "health_p50_ms": 15,
+      "health_p95_ms": 49,
+      "health_max_ms": 112,
+      "health_timeouts": 0
+    }
+  ]
+}
