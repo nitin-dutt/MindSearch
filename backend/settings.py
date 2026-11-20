@@ -45,6 +45,10 @@ def _float(env, name, default):
         raise ConfigError(f"{name} must be a number, got '{raw}'") from None
 
 
+# System prompt profiles (llm.PROMPTS). 'enterprise' is the production default; the others are measured alternatives.
+PROMPT_PROFILES = ("enterprise", "enterprise_v3", "enterprise_v4", "enterprise_q35a", "enterprise_q35b", "enterprise_q35c", "benchmark")
+
+
 def _str(env, name, default):
     return env.get(name) or default
 
@@ -52,9 +56,13 @@ def _str(env, name, default):
 @dataclass(frozen=True)
 class Settings:
     # ---- models
-    generator_model: str          # GENERATOR_MODEL: the model vLLM serves for answers (and follow-up rewriting)
+    generator_model: str          # GENERATOR_MODEL: the model vLLM serves for answers (and follow-up rewriting); Qwen3.5-4B since 2026-11-19
     embedding_model: str          # EMBEDDING_MODEL: sentence-transformers model for dense retrieval (CPU)
     reranker_model: str           # RERANKER_MODEL: cross-encoder that re-scores the candidates (CPU)
+    generator_thinking: str       # GENERATOR_THINKING: off (default) | on (answers think, helpers never) | none (send nothing: Qwen2.5, judge)
+    reranker_backend: str         # RERANKER_BACKEND: torch (default) | onnx (onnxruntime, CPU; PERF-03)
+    reranker_device: str          # RERANKER_DEVICE: cpu (default) | cuda (needs a CUDA PyTorch build and a visible GPU; PERF-03)
+    reranker_onnx_file: str       # RERANKER_ONNX_FILE: file inside the model repo used by the onnx backend
     spacy_model: str              # SPACY_MODEL: entity recogniser used when querying the graph
     judge_embeddings_model: str   # JUDGE_EMBEDDINGS_MODEL: embeddings RAGAS uses for answer relevancy
     # ---- model servers
@@ -72,6 +80,7 @@ class Settings:
     kg_extract_model: str         # KG_EXTRACT_MODEL: the Ollama model
     kg_vllm_model: str            # KG_VLLM_MODEL: model for the vllm extractor (empty = the generator model)
     kg_extract_num_ctx: int       # KG_EXTRACT_NUM_CTX
+    kg_extract_max_tokens: int    # KG_EXTRACT_MAX_TOKENS: reply budget of the vllm extractor (800 cut off 119/133 Qwen3.5 failures)
     kg_extract_num_gpu: int       # KG_EXTRACT_NUM_GPU: 0 = CPU
     kg_extract_workers: int       # KG_EXTRACT_WORKERS: 0 = automatic (8 for vllm, 1 for ollama)
     kg_max_failure_rate: float    # KG_MAX_FAILURE_RATE: a document whose graph extraction fails for more than this share of its passages is marked failed
@@ -127,9 +136,13 @@ class Settings:
         env = os.environ if env is None else env
         vllm_base = _str(env, "VLLM_API_BASE", "http://localhost:8001/v1")
         s = cls(
-            generator_model=_str(env, "GENERATOR_MODEL", "Qwen/Qwen2.5-7B-Instruct-AWQ"),
+            generator_model=_str(env, "GENERATOR_MODEL", "RedHatAI/Qwen3.5-4B-quantized.w4a16"),   # MODEL-01, since 2026-11-19
             embedding_model=_str(env, "EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
             reranker_model=_str(env, "RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
+            generator_thinking=_str(env, "GENERATOR_THINKING", "off"),
+            reranker_backend=_str(env, "RERANKER_BACKEND", "torch"),
+            reranker_device=_str(env, "RERANKER_DEVICE", "cpu"),
+            reranker_onnx_file=_str(env, "RERANKER_ONNX_FILE", "onnx/model_qint8_avx512_vnni.onnx"),
             spacy_model=_str(env, "SPACY_MODEL", "en_core_web_sm"),
             judge_embeddings_model=_str(env, "JUDGE_EMBEDDINGS_MODEL", "all-MiniLM-L6-v2"),
             vllm_api_base=vllm_base,
@@ -144,6 +157,7 @@ class Settings:
             kg_extract_model=_str(env, "KG_EXTRACT_MODEL", "qwen2.5:14b-instruct"),
             kg_vllm_model=_str(env, "KG_VLLM_MODEL", ""),
             kg_extract_num_ctx=_int(env, "KG_EXTRACT_NUM_CTX", 4096),
+            kg_extract_max_tokens=_int(env, "KG_EXTRACT_MAX_TOKENS", 2048),
             kg_extract_num_gpu=_int(env, "KG_EXTRACT_NUM_GPU", 0),
             kg_extract_workers=_int(env, "KG_EXTRACT_WORKERS", 0),
             kg_max_failure_rate=_float(env, "KG_MAX_FAILURE_RATE", 0.25),
@@ -159,7 +173,7 @@ class Settings:
             agent_max_queries=_int(env, "AGENT_MAX_QUERIES", 3),
             agent_max_passages=_int(env, "AGENT_MAX_PASSAGES", 6),
             agent_timeout_s=_float(env, "AGENT_TIMEOUT_S", 8.0),
-            prompt_profile=_str(env, "PROMPT_PROFILE", "enterprise").lower(),
+            prompt_profile=_str(env, "PROMPT_PROFILE", "enterprise_q35c").lower(),
             model_max_len=_int(env, "MODEL_MAX_LEN", 8192),
             answer_max_tokens=_int(env, "ANSWER_MAX_TOKENS", 1024),
             worker_metrics_port=_int(env, "WORKER_METRICS_PORT", 9100),
@@ -187,14 +201,22 @@ class Settings:
     def validate(self):
         if self.kg_extractor not in ("ollama", "vllm"):
             raise ConfigError(f"KG_EXTRACTOR must be 'ollama' or 'vllm', got '{self.kg_extractor}'")
-        for name in ("retrieval_workers", "max_upload_mb", "kg_extract_num_ctx", "history_token_budget", "ocr_dpi", "ocr_max_pixels",
+        for name in ("retrieval_workers", "max_upload_mb", "kg_extract_num_ctx", "kg_extract_max_tokens", "history_token_budget", "ocr_dpi", "ocr_max_pixels",
                      "ocr_page_timeout_s"):
             if getattr(self, name) < 1:
                 raise ConfigError(f"{name.upper()} must be at least 1")
-        if self.prompt_profile not in ("enterprise", "enterprise_v3", "benchmark"):
-            raise ConfigError(f"PROMPT_PROFILE must be 'enterprise', 'enterprise_v3' or 'benchmark', got '{self.prompt_profile}'")
+        if self.prompt_profile not in PROMPT_PROFILES:
+            raise ConfigError(f"PROMPT_PROFILE must be one of {', '.join(PROMPT_PROFILES)}, got '{self.prompt_profile}'")
         if self.model_max_len < self.answer_max_tokens + 1024:
             raise ConfigError("MODEL_MAX_LEN must leave at least 1024 tokens of room for the prompt beyond ANSWER_MAX_TOKENS")
+        if self.generator_thinking not in ("off", "on", "none"):
+            raise ConfigError(f"GENERATOR_THINKING must be 'off', 'on' or 'none', got '{self.generator_thinking}'")
+        if self.reranker_backend not in ("torch", "onnx"):
+            raise ConfigError(f"RERANKER_BACKEND must be 'torch' or 'onnx', got '{self.reranker_backend}'")
+        if self.reranker_device not in ("cpu", "cuda"):
+            raise ConfigError(f"RERANKER_DEVICE must be 'cpu' or 'cuda', got '{self.reranker_device}'")
+        if self.reranker_backend == "onnx" and self.reranker_device != "cpu":
+            raise ConfigError("RERANKER_BACKEND=onnx runs on the CPU only (the onnxruntime package has no GPU support); use RERANKER_DEVICE=cpu")
         if self.chat_strategy not in ("rewrite", "agent"):
             raise ConfigError(f"CHAT_STRATEGY must be 'rewrite' or 'agent', got '{self.chat_strategy}'")
         if not 1 <= self.agent_max_queries <= 5:

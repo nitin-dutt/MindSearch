@@ -10,7 +10,8 @@ BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def test_defaults_match_the_verified_stack():
     cfg = S.Settings.from_env({})
-    assert cfg.generator_model == "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    assert cfg.generator_model == "RedHatAI/Qwen3.5-4B-quantized.w4a16"      # MODEL-01, default since 2026-11-19
+    assert cfg.generator_thinking == "off" and cfg.prompt_profile == "enterprise_q35c"
     assert cfg.embedding_model == "all-MiniLM-L6-v2"
     assert cfg.reranker_model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
     assert cfg.kg_extractor == "ollama" and cfg.pipeline_preset == "hybrid_graph_chunks" and cfg.retrieval_workers == 4
