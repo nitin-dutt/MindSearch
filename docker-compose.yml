@@ -54,8 +54,16 @@ services:
     ipc: host
     environment:
       - VLLM_USE_V2_MODEL_RUNNER=0
+      # Use only the model already in the cache, never huggingface.co. Without this, vLLM's first chat request looked up the model's
+      # files online and, with the connection failing, retried for ~33 s (found 2026-11-19; a hidden outbound call, ENG-06).
+      # First-ever start on a new machine: HF_HUB_OFFLINE=0 once, so the model is downloaded; a missing model then fails loudly.
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
     volumes:
       - huggingface_cache:/root/.cache/huggingface
+      # GPU code vLLM compiles (torch.compile, Triton kernels) survives container re-creation; without these the first question after
+      # a re-created vLLM took 37 s instead of about 2 s (measured 2026-11-19)
+      - vllm_compile_cache:/root/.cache/vllm
+      - vllm_triton_cache:/root/.triton
     deploy:
       resources:
         reservations:
@@ -63,26 +71,48 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    # VLLM_MODEL lets the evaluation swap in a different judge model (see evaluation/judge.py);
-    # unset, it serves the Qwen generator exactly as before.
+    # Default since 2026-11-19 (alignment_plan MODEL-01 / PERF-03, all guards passed): Qwen3.5-4B, 4-bit (Red Hat build), text part
+    # only, thinking parsed out, CUDA graphs, at most 12 answers in progress. Each line stays a switch:
+    #   VLLM_MODEL / GENERATOR_MODEL     the model (VLLM_MODEL overrides only the server, e.g. for the evaluation judge)
+    #   VLLM_QUANTIZATION                must match the model's 4-bit format (awq for Qwen2.5 / the Llama judge)
+    #   VLLM_KV_CACHE_DTYPE              PERF-02: auto (16-bit); fp8 was measured and rejected (garbled answers)
+    #   VLLM_MAX_NUM_SEQS                cap on answers in progress; CUDA graphs on a hybrid model need <= 47 (12 measured best)
+    #   VLLM_REASONING_FLAG              empty = no reasoning parser (a model that does not think)
+    #   VLLM_LANGUAGE_MODEL_ONLY_FLAG    empty = load the whole model; with it on, vLLM skips the image part (otherwise no KV room on 8 GB)
+    #   VLLM_ENFORCE_EAGER=1             back to eager mode (no CUDA graphs)
+    #   VLLM_MTP_TOKENS=N                multi-token prediction; does not fit together with CUDA graphs on 8 GB
+    #   VLLM_GPU_MEMORY_UTILIZATION      vLLM's share of the GPU; about 0.86 is the ceiling on this laptop (Windows keeps ~1.1 GiB)
+    # Ready-made sets: models/qwen25-7b.env (the previous stack) and models/judge-llama31-8b.env (the evaluation judge), used as
+    #   docker compose --env-file .env --env-file models/qwen25-7b.env up -d
+    # A value vLLM does not accept stops its start-up: the health check fails and the API never starts (loud, no fallback).
     command: >
-      --model ${VLLM_MODEL:-${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}}
-      --quantization awq
-      --gpu-memory-utilization 0.85 
+      --model ${VLLM_MODEL:-${GENERATOR_MODEL:-RedHatAI/Qwen3.5-4B-quantized.w4a16}}
+      --quantization ${VLLM_QUANTIZATION:-compressed-tensors}
+      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
       --max-model-len ${VLLM_MAX_LEN:-8192}
+      --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE:-auto}
+      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-12}
+      ${VLLM_REASONING_FLAG---reasoning-parser=qwen3}
+      ${VLLM_LANGUAGE_MODEL_ONLY_FLAG---language-model-only}
       --enable-auto-tool-choice
-      --tool-call-parser ${VLLM_TOOL_PARSER:-hermes}
-      --enforce-eager
+      --tool-call-parser ${VLLM_TOOL_PARSER:-qwen3_coder}
+      ${VLLM_ENFORCE_EAGER:+--enforce-eager}
+      ${VLLM_MTP_TOKENS:+--speculative-config.method mtp --speculative-config.num_speculative_tokens ${VLLM_MTP_TOKENS}}
+    # Healthy = can generate: the check asks the served model for one token. The first generation of a new vLLM process takes about
+    # 33 s (measured 2026-11-19; later ones 0.07 s), so it happens here, before the API (which waits for healthy) lets users in.
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
-      interval: 20s
-      timeout: 8s
+      test: ["CMD", "python3", "-c", "import json, urllib.request as u; m = json.load(u.urlopen('http://localhost:8000/v1/models', timeout=5))['data'][0]['id']; u.urlopen(u.Request('http://localhost:8000/v1/chat/completions', data=json.dumps({'model': m, 'messages': [{'role': 'user', 'content': 'Hi'}], 'max_tokens': 1}).encode(), headers={'Content-Type': 'application/json'}), timeout=80)"]
+      interval: 30s
+      timeout: 90s
       retries: 10
-      start_period: 240s     # loading the model takes a few minutes
+      start_period: 300s     # loading the model and the first generation take a few minutes
 
   api:
     build:
       context: ./backend
+      args:
+        WITH_ONNX: "${WITH_ONNX:-0}"   # 1 = also install onnxruntime, for RERANKER_BACKEND=onnx (PERF-03, measured, not adopted)
+        TORCH_CUDA: "${TORCH_CUDA:-1}" # CUDA PyTorch for the GPU re-ranker (PERF-03; image about 12 GB). 0 = CPU-only image
     ports:
       - "8000:8000"
     environment:
@@ -94,10 +124,16 @@ services:
       - RETRIEVAL_WORKERS=${RETRIEVAL_WORKERS:-4}
       - PIPELINE_PRESET=${PIPELINE_PRESET:-hybrid_graph_chunks}
       - RERANK_ONCE=${RERANK_ONCE:-1}            # 0 = score the pool twice, as before PERF-01 (only for the before/after load test)
+      # PERF-03: the cross-encoder runs on the GPU (default since 2026-11-19; vLLM starts first, see depends_on). It scores one batch at
+      # start-up (warm-up); if the GPU cannot, the API refuses to start (no fallback). RERANKER_DEVICE=cpu brings the CPU back.
+      - RERANKER_BACKEND=${RERANKER_BACKEND:-torch}
+      - RERANKER_DEVICE=${RERANKER_DEVICE:-cuda}
       # rewrite (default): one search with a rewritten follow-up. agent: the model plans 1-3 searches by calling a tool (backend/agent.py)
       - CHAT_STRATEGY=${CHAT_STRATEGY:-rewrite}
       - MODEL_MAX_LEN=${VLLM_MAX_LEN:-8192}      # same value vLLM is started with: the prompt budget is computed from it
-      - GENERATOR_MODEL=${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}   # the model vLLM serves (see vllm_engine); one setting for both
+      - GENERATOR_MODEL=${GENERATOR_MODEL:-RedHatAI/Qwen3.5-4B-quantized.w4a16}   # the model vLLM serves (see vllm_engine)
+      - GENERATOR_THINKING=${GENERATOR_THINKING:-off}   # off | on (answers think, helper calls never) | none (a model without the option)
+      - PROMPT_PROFILE=${PROMPT_PROFILE:-enterprise_q35c}   # the prompt tuned for Qwen3.5 on dev sets; enterprise for Qwen2.5
       - TOKENIZERS_PARALLELISM=false
       - MINDSEARCH_DATA_KEY=${MINDSEARCH_DATA_KEY:?Set MINDSEARCH_DATA_KEY in .env}
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -117,6 +153,15 @@ services:
         bind:
           create_host_path: false
       - ./backend/org_policy.yaml:/app/org_policy.yaml:ro
+      # GPU code compiled on first use (about 130 MB) survives container re-creation: first question 7.7 s -> 1.3 s (measured)
+      - reranker_cuda_cache:/root/.nv
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
       interval: 15s
@@ -139,6 +184,7 @@ services:
       context: ./backend
       args:
         WITH_EVAL: "1"      # the worker image also carries the evaluation libraries (RAGAS); the API image does not
+        WITH_ONNX: "${WITH_ONNX:-0}"
     command: celery -A worker.celery_app worker --loglevel=info --pool=solo
     environment:
       - NEO4J_URI=neo4j://neo4j:7687
@@ -153,7 +199,11 @@ services:
       # Graph extraction backend: ollama (14B on CPU, best accuracy, slow) or vllm (GPU, fast). See kg_extractors.py
       - KG_EXTRACTOR=${KG_EXTRACTOR:-ollama}
       - MODEL_MAX_LEN=${VLLM_MAX_LEN:-8192}
-      - GENERATOR_MODEL=${GENERATOR_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}
+      - GENERATOR_MODEL=${GENERATOR_MODEL:-RedHatAI/Qwen3.5-4B-quantized.w4a16}   # the model vLLM serves (see vllm_engine)
+      - GENERATOR_THINKING=${GENERATOR_THINKING:-off}
+      - PROMPT_PROFILE=${PROMPT_PROFILE:-enterprise_q35c}
+      - RERANKER_BACKEND=${RERANKER_BACKEND:-torch}   # same re-ranker model as the API, so evaluation runs measure what users get
+      - RERANKER_DEVICE=${WORKER_RERANKER_DEVICE:-cpu}   # the worker has no GPU; GPU and CPU scores were identical on 100/100 pools
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/org_policy.yaml:/app/org_policy.yaml:ro
@@ -216,6 +266,9 @@ services:
       - prometheus
 
 volumes:
+  vllm_compile_cache:
+  vllm_triton_cache:
+  reranker_cuda_cache:
   redis_data:
   neo4j_data:
   huggingface_cache:
