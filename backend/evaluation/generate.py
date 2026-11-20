@@ -35,7 +35,7 @@ from access_policy import DocACL
 from answers import ABSTAIN_MESSAGE, extract_citations, is_abstention
 
 EVAL_ACL = DocACL(min_rank=0)  # evaluation documents are readable by everyone; queries run as the superuser
-from settings import get_settings  # noqa: E402
+from settings import PROMPT_PROFILES, get_settings  # noqa: E402
 
 MAX_KG_FAILURE_RATE = get_settings().kg_max_failure_rate  # abort the run past this share of failed chunks (same rule as uploads)
 POOL_KS = (1, 3, 5, 10, 20)
@@ -352,7 +352,7 @@ def main():
     ap.add_argument("--concurrency", type=int, default=4, help="parallel LLM requests")
     ap.add_argument("--no-generate", action="store_true", help="retrieval metrics only; no LLM calls")
     ap.add_argument("--rebuild-index", action="store_true")
-    ap.add_argument("--prompt-profile", choices=["enterprise", "enterprise_v3", "benchmark"], help="system prompt (default: the PROMPT_PROFILE setting)")
+    ap.add_argument("--prompt-profile", choices=list(PROMPT_PROFILES), help="system prompt (default: the PROMPT_PROFILE setting)")
     ap.add_argument("--abstain-below", type=float, help="refusal gate: say \"I don't know\" when the best passage scores below this")
     ap.add_argument("--reset-graph", action="store_true",
                     help="REQUIRED for graph configs: WIPES ALL Neo4j DATA and rebuilds the graph from the corpus")
