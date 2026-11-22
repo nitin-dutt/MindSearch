@@ -99,7 +99,7 @@ MindSearch/
 ├── docker-compose.yml              # Stack: API, vLLM, Neo4j, Redis, Qdrant, Celery worker, UI, Prometheus, Grafana (pinned, health-checked)
 ├── docker-compose.eval.yml         # Overlay: run against the current source without rebuilding
 ├── .env.example                    # Secrets template (copy to .env, which is git-ignored)
-├── .github/                        # CI workflow (lint, tests, Docker build, audit) and Dependabot config
+├── .github/                        # CI workflow (lint, tests, Docker build, audit)
 ├── ruff.toml, LICENSE, README.md
 ├── prometheus/prometheus.yml       # Prometheus scrape configuration
 ├── samples/                        # Example documents
@@ -524,7 +524,7 @@ Planned next steps (items marked *done in v2* have already shipped):
 - **Inline Visual Rendering:** Pass image source identifiers back to the chat UI to display original diagrams alongside text answers.
 
 ### Phase 4: CI/CD Quality Gates & Evaluation Pipelines
-- **CI (done in v2):** GitHub Actions runs lint, the full test suite against real Neo4j and Qdrant (88% coverage, floor 80%), a Docker build and a dependency audit on every push; Dependabot keeps pins fresh. **Remaining:**
+- **CI (done in v2):** GitHub Actions runs lint, the full test suite against real Neo4j and Qdrant (88% coverage, floor 80%), a Docker build and a dependency audit on every push, which flags pinned packages with known vulnerabilities. **Remaining:**
 - **Automated RAGAS Regression Tests:** Integrate evaluation runs into CI/CD pipelines to block releases if Answer Relevancy or Faithfulness degrades below established thresholds.
 - **Dedicated Judge LLMs (partly done in v2: the judge is a separate model run in a separate pass):** Decouple evaluation onto specialized grading models (e.g., `Prometheus-2` or `Patronus`) to prevent judge workloads from contending for serving VRAM.
 
@@ -574,7 +574,7 @@ Sign in at the UI with the user you created. This starts (infrastructure ports l
 - **Grafana:** `http://localhost:3000`
 
 ### Tests and CI
-Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages, npm packages, base images, compose images and the workflow's own actions, so each update is tested before it is merged. Minor and patch updates are grouped into one pull request per ecosystem; major updates each get their own. The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. The suite has 644 tests (all passing inside the worker container on 2026-11-19; 12 skipped there because they need the compose files or a GPU), and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
+Every push and pull request runs `.github/workflows/ci.yml`: lint (`ruff`), the full pytest suite against real Neo4j and Qdrant service containers with a coverage report, a Docker build of both images with an import smoke test, and a `pip-audit` of the pinned dependency lock (it fails on any new advisory; three advisories that have no fixed release yet are ignored by name in the workflow). The suite measures 88% line coverage of the application code (`backend/.coveragerc` excludes tests, evaluation scripts and one-off tools), and CI fails if it drops below 80%. The suite has 644 tests (all passing inside the worker container on 2026-11-19; 12 skipped there because they need the compose files or a GPU), and the API image is about 3.0 GB (it was 11.5 GB before CPU-only torch). To run the same checks locally:
 ```bash
 ruff check .
 cd backend && python -m pytest tests -q --cov=. --cov-config=.coveragerc --cov-report=term
